@@ -72,10 +72,10 @@ class HubSpotClient {
       closeDate.setDate(closeDate.getDate() + 30);
       const closeDateStr = closeDate.toISOString().split('T')[0];
 
-      const dealProperties = {
+    const dealProperties = {
   dealname: dealData.courseName || 'Course Enrollment',
   amount: String(Math.round((dealData.courseAmount || 199) * 100)),
-  dealstage: '1032873244',  // ✅ "Send Enrolment Details" (1st B2C stage)
+  dealstage: 'appointmentscheduled',  // ✅ BACK TO WORKING DEFAULT STAGE
   closedate: closeDateStr
 };
 

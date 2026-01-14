@@ -140,14 +140,14 @@ exports.createDealFromWebhook = async (req, res) => {
   try {
     console.log('🎯 [RAW AXCELERATE PAYLOAD]:', JSON.stringify(req.body, null, 2));
     
-    // 🔥 FLEXIBLE PARSING - extracts from ANY Axcelerate format
+    /* ✅ IMPROVED PARSING */
     const enrollmentData = {
       enrollmentId: req.body.id || 
                    req.body.enrollmentId || 
                    req.body.data?.id || 
                    req.body.properties?.enrollment_id ||
                    req.body.enrolment_id ||
-                   `axc-enroll-${Date.now()}`, // fallback ID
+                   `axc-enroll-${Date.now()}`,
       
       studentEmail: req.body.email || 
                    req.body.student?.email || 
@@ -155,14 +155,37 @@ exports.createDealFromWebhook = async (req, res) => {
                    req.body.properties?.email ||
                    req.body.properties?.student_email ||
                    req.body.data?.student?.email ||
-                   'student@example.com', // fallback
+                   'student@example.com',
       
-      studentName: req.body.student?.name || 
-                  req.body.contact?.name || 
-                  req.body.properties?.firstname + ' ' + (req.body.properties?.lastname || '') ||
-                  req.body.data?.student?.name ||
-                  'Test Student',
+      studentFirstName: req.body.student?.firstName ||
+                       req.body.student?.first_name ||
+                       req.body.contact?.firstName ||
+                       req.body.firstName ||
+                       req.body.properties?.firstname ||
+                       req.body.data?.student?.firstName ||
+                       'Student',
       
+      studentLastName: req.body.student?.lastName ||
+                      req.body.student?.last_name ||
+                      req.body.contact?.lastName ||
+                      req.body.lastName ||
+                      req.body.properties?.lastname ||
+                      req.body.data?.student?.lastName ||
+                      'User',
+
+      /* ✅ CRITICAL: Course Code */
+      courseCode: req.body.course?.code ||
+                 req.body.course?.id ||
+                 req.body.product?.code ||
+                 req.body.product?.id ||
+                 req.body.courseCode ||
+                 req.body.course_code ||
+                 req.body.data?.course?.code ||
+                 req.body.properties?.course_code ||
+                 req.body.productId ||
+                 'COURSE-001',
+
+      /* ✅ Course Name (for reference) */
       courseName: req.body.course?.name || 
                  req.body.product?.name || 
                  req.body.data?.course?.name ||
@@ -175,13 +198,12 @@ exports.createDealFromWebhook = async (req, res) => {
                    parseFloat(req.body.course?.price) || 
                    parseFloat(req.body.properties?.amount) || 
                    parseFloat(req.body.properties?.course_amount) ||
-                   199.00
+                   0
     };
 
     console.log('✅ [PARSED DATA]:', enrollmentData);
 
-    // NO VALIDATION - use fallbacks so it ALWAYS works
-    // Check duplicate first
+    // Check duplicate
     const existingSync = await HubSpotSync.findOne({ 
       enrollmentId: enrollmentData.enrollmentId 
     });
@@ -196,34 +218,37 @@ exports.createDealFromWebhook = async (req, res) => {
       });
     }
 
-    // Create/find contact
+    // Create/find contact with FULL NAME
     const contactResult = await createOrGetContact({
       email: enrollmentData.studentEmail,
-      name: enrollmentData.studentName
+      firstName: enrollmentData.studentFirstName,
+      lastName: enrollmentData.studentLastName,
+      fullName: `${enrollmentData.studentFirstName} ${enrollmentData.studentLastName}`
     });
 
     if (!contactResult.success) {
       console.error('❌ Contact failed:', contactResult.error);
-      // Continue anyway - deal can exist without contact association
     }
 
     const contactId = contactResult.contactId || null;
 
-    // Create deal using YOUR hubspotClient
+    /* ✅ CRITICAL: Pass courseCode to createDeal */
     const dealId = await HubSpotClient.createDeal(contactId, {
+      courseCode: enrollmentData.courseCode,  // ✅ MUST PASS THIS
       courseName: enrollmentData.courseName,
       courseAmount: enrollmentData.courseAmount
     });
 
-    // Save to YOUR database
+    // Save to database
     await HubSpotSync.create({
       type: 'enrollment_to_deal',
       enrollmentId: enrollmentData.enrollmentId,
       dealId: dealId,
       contactId: contactId,
       studentEmail: enrollmentData.studentEmail,
-      studentName: enrollmentData.studentName,
+      studentName: `${enrollmentData.studentFirstName} ${enrollmentData.studentLastName}`,
       courseName: enrollmentData.courseName,
+      courseCode: enrollmentData.courseCode,  // ✅ STORE THIS TOO
       courseAmount: enrollmentData.courseAmount,
       status: 'success'
     });
@@ -231,6 +256,7 @@ exports.createDealFromWebhook = async (req, res) => {
     console.log('🎉 [SUCCESS] Enrollment → Deal:', {
       enrollmentId: enrollmentData.enrollmentId,
       dealId: dealId,
+      dealName: `${enrollmentData.studentFirstName} ${enrollmentData.studentLastName} – ${enrollmentData.courseCode}`,
       studentEmail: enrollmentData.studentEmail
     });
 
@@ -239,13 +265,13 @@ exports.createDealFromWebhook = async (req, res) => {
       message: '✅ Enrollment synced to HubSpot Deal',
       enrollmentId: enrollmentData.enrollmentId,
       dealId: dealId,
-      studentEmail: enrollmentData.studentEmail
+      studentEmail: enrollmentData.studentEmail,
+      dealName: `${enrollmentData.studentFirstName} ${enrollmentData.studentLastName} – ${enrollmentData.courseCode}`
     });
 
   } catch (error) {
     console.error('💥 [WEBHOOK ERROR]:', error.message);
     
-    // Log failure to YOUR database
     try {
       await HubSpotSync.create({
         type: 'enrollment_to_deal',
@@ -261,7 +287,7 @@ exports.createDealFromWebhook = async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message,
-      receivedPayload: req.body // DEBUG: shows what Axcelerate sent
+      receivedPayload: req.body
     });
   }
 };

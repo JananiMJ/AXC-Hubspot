@@ -27,46 +27,59 @@ class HubSpotClient {
     try {
       console.log('[Deal Creation] Started');
 
-      /* ---------------- Close Date ---------------- */
+      /* ✅ FIXED: Close Date */
       const closeDate = new Date();
       closeDate.setDate(closeDate.getDate() + 30);
       const closeDateStr = closeDate.toISOString().split('T')[0];
 
-      /* ---------------- Get Contact Name ---------------- */
-      let contactName = 'Student';
+      /* ✅ FIXED: Get Contact Name - Proper error handling */
+      let contactName = 'Unknown Student';
+      let firstName = '';
+      let lastName = '';
 
       if (contactId) {
-        const contactResponse = await axios.get(
-          `${this.baseURL}/crm/v3/objects/contacts/${contactId}?properties=firstname,lastname`,
-          { headers: this.getHeaders() }
-        );
+        try {
+          const contactResponse = await axios.get(
+            `${this.baseURL}/crm/v3/objects/contacts/${contactId}?properties=firstname,lastname`,
+            { headers: this.getHeaders() }
+          );
 
-        const firstName =
-          contactResponse.data.properties.firstname || '';
-        const lastName =
-          contactResponse.data.properties.lastname || '';
+          firstName = contactResponse.data.properties.firstname?.value || '';
+          lastName = contactResponse.data.properties.lastname?.value || '';
 
-        contactName = `${firstName} ${lastName}`.trim();
+          contactName = `${firstName} ${lastName}`.trim() || 'Unknown Student';
+          console.log('[✅ Contact Name Retrieved]:', contactName);
+        } catch (nameErr) {
+          console.log('[⚠️ Could not fetch contact name]:', nameErr.message);
+          contactName = 'Unknown Student';
+        }
       }
 
-      /* ---------------- Course Details ---------------- */
-      const courseCode =
-        dealData.courseCode ||
-        dealData.courseName ||
-        'Course Enrollment';
+      /* ✅ FIXED: Course Code - must come from dealData */
+      const courseCode = dealData.courseCode || 
+                        dealData.courseName || 
+                        dealData.course_code ||
+                        dealData.productName ||
+                        'UNKNOWN-COURSE';
 
-      /* ---------------- Dynamic Deal Name ---------------- */
+      console.log('[Course Code]:', courseCode);
+
+      /* ✅ FIXED: Deal Name Format - "FirstName LastName – CourseCode" */
       const dealName = `${contactName} – ${courseCode}`;
+      console.log('[Deal Name Generated]:', dealName);
 
-      /* ---------------- Deal Properties ---------------- */
+      /* ✅ FIXED: Deal Properties with correct pipeline and stage */
       const dealProperties = {
         dealname: dealName,
-        amount: String(Math.round((dealData.courseAmount || 199) * 100)),
-        dealstage: 'appointmentscheduled',
+        amount: String(Math.round((dealData.courseAmount || 0) * 100)), // in cents
+        dealstage: 'send_enrollment_details',  // ✅ CORRECT STAGE
+        pipeline: 'b2c_pipeline',  // ✅ B2C PIPELINE
         closedate: closeDateStr,
       };
 
-      /* ---------------- Create Deal ---------------- */
+      console.log('[Deal Properties]:', dealProperties);
+
+      /* Create Deal */
       const dealResponse = await axios.post(
         `${this.baseURL}/crm/v3/objects/deals`,
         { properties: dealProperties },
@@ -76,19 +89,24 @@ class HubSpotClient {
       const dealId = dealResponse.data.id;
       console.log('[✅ Deal Created] Deal ID:', dealId);
 
-      /* ---------------- Associate Contact ---------------- */
+      /* Associate Contact with Deal */
       if (contactId) {
-        await axios.put(
-          `${this.baseURL}/crm/v4/objects/deals/${dealId}/associations/contacts`,
-          [
-            {
-              id: contactId,
-              type: 'deal_to_contact',
-            },
-          ],
-          { headers: this.getHeaders() }
-        );
-        console.log('[🔗 Deal Associated with Contact]');
+        try {
+          await axios.put(
+            `${this.baseURL}/crm/v4/objects/deals/${dealId}/associations/contacts`,
+            [
+              {
+                id: contactId,
+                type: 'deal_to_contact',
+              },
+            ],
+            { headers: this.getHeaders() }
+          );
+          console.log('[🔗 Deal Associated with Contact]');
+        } catch (assocErr) {
+          console.log('[⚠️ Association failed (non-critical)]:', assocErr.message);
+          // Continue - deal exists even if association fails
+        }
       }
 
       return dealId;

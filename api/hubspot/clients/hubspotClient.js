@@ -32,13 +32,15 @@ class HubSpotClient {
     const closeDateStr = closeDate.toISOString().split('T')[0];
 
     // Prepare deal properties
-    const dealProperties = {
-      dealname: dealData.courseName || 'New Deal',
-      amount: String(Math.round(dealData.courseAmount * 100)), // Convert to cents
-      dealstage: 'negotiation',
-      closedate: closeDateStr
-    };
 
+
+    const dealProperties = {
+  dealname: dealData.courseName || 'New Deal',
+  amount: String(Math.round(dealData.courseAmount * 100)), // Convert to cents
+  dealstage: 'appointmentscheduled',  // ✅ CORRECT STAGE FROM YOUR ERROR
+  closedate: closeDateStr
+};
+    
     console.log('[Deal Creation] Properties:', dealProperties);
     console.log('[Deal Creation] Contact ID:', contactId);
 

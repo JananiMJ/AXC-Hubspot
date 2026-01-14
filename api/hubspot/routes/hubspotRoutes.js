@@ -47,5 +47,34 @@ router.get('/pipelines/:pipelineId/stages', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+router.post('/mapping-test', async (req, res) => {
+  try {
+    const ContactMapping = require('../models/contactMapping');
+    
+    console.log('🧪 [Test] Creating mapping...');
+    
+    const testMapping = await ContactMapping.create({
+      axcContactId: 'TEST-' + Date.now(),
+      hubspotContactId: 'TEST-HUB-' + Date.now(),
+      email: 'test@example.com',
+      firstName: 'Test',
+      lastName: 'User'
+    });
 
+    console.log('🧪 [Test] Mapping created:', testMapping);
+
+    res.json({
+      success: true,
+      message: 'Test mapping created',
+      mapping: testMapping
+    });
+
+  } catch (err) {
+    console.error('🧪 [Test Error]', err.message);
+    res.status(500).json({
+      error: 'Test failed',
+      details: err.message
+    });
+  }
+});
 module.exports = router;

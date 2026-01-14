@@ -193,12 +193,13 @@ exports.testConnection = async (req, res) => {
 
 exports.createContactMapping = async (req, res) => {
   try {
-    console.log('📝 [Mapping Request]:', JSON.stringify(req.body, null, 2));
+    console.log('📝 [Mapping Request Received]:', JSON.stringify(req.body, null, 2));
 
     const { axcContactId, hubspotContactId, email, firstName, lastName } = req.body;
 
     // Validate required fields
     if (!axcContactId || !hubspotContactId) {
+      console.error('❌ [Validation Error] Missing required fields');
       return res.status(400).json({
         error: 'Required fields: axcContactId, hubspotContactId',
         received: req.body
@@ -209,18 +210,23 @@ exports.createContactMapping = async (req, res) => {
     const axcId = String(axcContactId).trim();
     const hubId = String(hubspotContactId).trim();
 
-    console.log('🔍 [Validating]:', { axcId, hubId });
+    console.log('🔍 [Normalized IDs]:', { axcId, hubId });
+
+    // Check database connection
+    console.log('📡 [Database Connection]:', mongoose.connection.readyState === 1 ? 'Connected' : 'Not connected');
 
     // Check if mapping already exists
+    console.log('🔎 [Checking existing mapping]...');
     const existingMapping = await ContactMapping.findOne({ axcContactId: axcId });
     
     if (existingMapping) {
-      console.log('🔄 [Updating existing mapping]:', axcId);
+      console.log('🔄 [Existing mapping found]:', existingMapping);
     } else {
-      console.log('✨ [Creating new mapping]:', axcId);
+      console.log('✨ [No existing mapping - will create new]');
     }
 
     // Create or update mapping
+    console.log('💾 [Saving to database]...');
     const mapping = await ContactMapping.findOneAndUpdate(
       { axcContactId: axcId },
       {
@@ -231,27 +237,46 @@ exports.createContactMapping = async (req, res) => {
         lastName: lastName || null,
         updatedAt: new Date()
       },
-      { upsert: true, new: true }
+      { 
+        upsert: true, 
+        new: true,
+        runValidators: false
+      }
     );
 
-    console.log('✅ [Mapping Saved]:', {
+    console.log('✅ [Mapping Saved to Database]:', {
+      _id: mapping._id,
       axcContactId: mapping.axcContactId,
       hubspotContactId: mapping.hubspotContactId,
       firstName: mapping.firstName,
-      lastName: mapping.lastName
+      lastName: mapping.lastName,
+      email: mapping.email
     });
+
+    // Verify it was saved
+    const verifyMapping = await ContactMapping.findOne({ axcContactId: axcId });
+    console.log('🔐 [Verification - Read Back from DB]:', verifyMapping ? 'SUCCESS' : 'FAILED');
 
     res.json({
       success: true,
       message: 'Contact mapping created successfully',
-      mapping
+      mapping: {
+        _id: mapping._id,
+        axcContactId: mapping.axcContactId,
+        hubspotContactId: mapping.hubspotContactId,
+        firstName: mapping.firstName,
+        lastName: mapping.lastName,
+        email: mapping.email
+      }
     });
 
   } catch (err) {
-    console.error('[Mapping Error]', err.message);
+    console.error('❌ [Mapping Error]', err.message);
+    console.error('[Stack]', err.stack);
     res.status(500).json({
       error: 'Failed to create mapping',
-      details: err.message
+      details: err.message,
+      name: err.name
     });
   }
 };

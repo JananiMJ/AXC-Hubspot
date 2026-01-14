@@ -35,5 +35,5 @@ router.get('/pipelines/:pipelineId/stages', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
+router.post('/mapping', hubspotController.createContactMapping);
 module.exports = router;

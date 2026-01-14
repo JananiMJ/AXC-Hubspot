@@ -1,28 +1,41 @@
 const express = require('express');
 const router = express.Router();
 
-// Import controller functions
 const hubspotController = require('../controllers/hubspotController');
 
-// Test the import
 console.log('Controller loaded:', Object.keys(hubspotController));
 
 // ===== OAuth Routes =====
-// Step 1: User clicks "Connect with HubSpot" button
 router.get('/oauth/authorize', hubspotController.authorizeOAuth);
-
-// Step 2: HubSpot redirects back here with authorization code
 router.get('/oauth/callback', hubspotController.oauthCallback);
-
-// Step 3: Refresh access token (when it expires)
 router.post('/oauth/refresh', hubspotController.refreshToken);
 
 // ===== Connection Test Route =====
-// Verify that HubSpot connection is working
 router.get('/test-connection', hubspotController.testConnection);
 
 // ===== Webhook Routes =====
-// Receive enrollment data from Axcelerate and create HubSpot deal
 router.post('/webhook', hubspotController.createDealFromWebhook);
+
+// ✅ NEW: Get available pipelines
+router.get('/pipelines', async (req, res) => {
+  try {
+    const HubSpotClient = require('../clients/hubspotClient');
+    const pipelines = await HubSpotClient.getPipelines();
+    res.json({ success: true, pipelines });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ✅ NEW: Get pipeline stages
+router.get('/pipelines/:pipelineId/stages', async (req, res) => {
+  try {
+    const HubSpotClient = require('../clients/hubspotClient');
+    const stages = await HubSpotClient.getPipelineStages(req.params.pipelineId);
+    res.json({ success: true, stages });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 module.exports = router;

@@ -57,14 +57,13 @@ class HubSpotClient {
       const courseCode = dealData.courseCode || 'UNKNOWN-COURSE';
       const contactName = dealData.contactName || 'Unknown';
       const dealName = `${contactName} – ${courseCode}`;
-
-      const dealProperties = {
-        dealname: dealName,
-        amount: String(Math.round((dealData.courseAmount || 0) * 100)),
-        dealstage: 'send_enrollment_details',
-        pipeline: 'b2c_pipeline',
-        closedate: closeDateStr,
-      };
+const dealProperties = {
+  dealname: dealName,
+  amount: String(Math.round((dealData.courseAmount || 0) * 100)),
+  dealstage: '1032873244',              // ✅ YOUR stage ID
+  pipeline: '705874836',                // ✅ YOUR pipeline ID
+  closedate: closeDateStr,
+};
 
       const dealResponse = await axios.post(
         'https://api.hubapi.com/crm/v3/objects/deals',

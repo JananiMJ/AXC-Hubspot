@@ -295,48 +295,55 @@ exports.createDealFromWebhook = async (req, res) => {
 // Helper function: Create or get contact in HubSpot
 async function createOrGetContact(contactData) {
   try {
-    const { email, name } = contactData;
+    const { email, firstName, lastName, fullName } = contactData;
 
-    // First, try to find existing contact by email
+    // ✅ FIXED: Proper search query
     try {
-      const searchResponse = await HubSpotClient.getClient().get(
-        `/crm/v3/objects/contacts/search`,
+      const searchResponse = await axios.post(
+        `${HubSpotClient.baseURL}/crm/v3/objects/contacts/search`,
         {
-          params: {
-            limit: 1,
-            after: 0,
-          },
-        }
+          filterGroups: [
+            {
+              filters: [
+                {
+                  propertyName: 'email',
+                  operator: 'EQ',
+                  value: email
+                }
+              ]
+            }
+          ],
+          limit: 1
+        },
+        { headers: HubSpotClient.getHeaders() }
       );
 
-      // Search through results for matching email
       if (searchResponse.data.results && searchResponse.data.results.length > 0) {
-        const existingContact = searchResponse.data.results.find(
-          c => c.properties.email === email
-        );
-        if (existingContact) {
-          return {
-            success: true,
-            contactId: existingContact.id,
-            created: false,
-          };
-        }
+        console.log('[Found existing contact]:', searchResponse.data.results[0].id);
+        return {
+          success: true,
+          contactId: searchResponse.data.results[0].id,
+          created: false,
+        };
       }
     } catch (searchErr) {
-      console.log('Search for existing contact failed, will create new:', searchErr.message);
+      console.log('[Search for existing contact failed, will create new]:', searchErr.message);
     }
 
-    // If contact doesn't exist, create a new one
-    const createResponse = await HubSpotClient.getClient().post(
-      '/crm/v3/objects/contacts',
+    // ✅ FIXED: Create new contact with proper names
+    const createResponse = await axios.post(
+      `${HubSpotClient.baseURL}/crm/v3/objects/contacts`,
       {
         properties: {
-          firstname: name?.split(' ')[0] || 'Unknown',
-          lastname: name?.split(' ').slice(1).join(' ') || '',
+          firstname: firstName || 'Unknown',
+          lastname: lastName || 'User',
           email: email,
         },
-      }
+      },
+      { headers: HubSpotClient.getHeaders() }
     );
+
+    console.log('[✅ Contact Created]:', createResponse.data.id);
 
     return {
       success: true,
@@ -344,7 +351,7 @@ async function createOrGetContact(contactData) {
       created: true,
     };
   } catch (err) {
-    console.error('Contact creation error:', err.response?.data || err.message);
+    console.error('❌ Contact creation error:', err.response?.data || err.message);
     return {
       success: false,
       error: err.response?.data || err.message,

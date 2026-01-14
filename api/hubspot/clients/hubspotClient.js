@@ -46,44 +46,60 @@ class HubSpotClient {
   };
 }
 
+async createDeal(contactId, dealData) {
+  try {
+    console.log('[Deal Creation] Starting for contact:', contactId);
 
-  async createDeal(contactId, dealData) {
+    const closeDate = new Date();
+    closeDate.setDate(closeDate.getDate() + 30);
+    const closeDateStr = closeDate.toISOString().split('T')[0];
+
+    // ✅ Use real contact name and course code
+    const courseCode = dealData.courseCode || 'UNKNOWN-COURSE';
+    const contactName = dealData.contactName || 'Unknown';
+    
+    // Create proper deal name: "Janani Divya – UEE62220"
+    const dealName = `${contactName} – ${courseCode}`;
+
+    console.log('[Deal Name Created]:', dealName);
+
+    const dealProperties = {
+      dealname: dealName,
+      amount: String(Math.round((dealData.courseAmount || 0) * 100)),
+      dealstage: '1032873244',    // Your stage ID
+      pipeline: '705874836',      // Your pipeline ID
+      closedate: closeDateStr,
+    };
+
+    console.log('[Deal Properties]:', dealProperties);
+
+    const dealResponse = await axios.post(
+      'https://api.hubapi.com/crm/v3/objects/deals',
+      { properties: dealProperties },
+      { headers: this.getHeaders() }
+    );
+
+    const dealId = dealResponse.data.id;
+    console.log('[Deal Created] ID:', dealId);
+
+    // Associate deal with contact
     try {
-      console.log('[Deal Creation] Starting:', dealData.courseName);
-      const closeDate = new Date();
-      closeDate.setDate(closeDate.getDate() + 30);
-      const closeDateStr = closeDate.toISOString().split('T')[0];
-
-      const courseCode = dealData.courseCode || 'UNKNOWN-COURSE';
-      const contactName = dealData.contactName || 'Unknown';
-      const dealName = `${contactName} – ${courseCode}`;
-const dealProperties = {
-  dealname: dealName,
-  amount: String(Math.round((dealData.courseAmount || 0) * 100)),
-  dealstage: '1032873244',              // ✅ YOUR stage ID
-  pipeline: '705874836',                // ✅ YOUR pipeline ID
-  closedate: closeDateStr,
-};
-
-      const dealResponse = await axios.post(
-        'https://api.hubapi.com/crm/v3/objects/deals',
-        { properties: dealProperties },
+      await axios.put(
+        `https://api.hubapi.com/crm/v4/objects/deals/${dealId}/associations/contacts`,
+        [{ id: contactId, type: 'deal_to_contact' }],
         { headers: this.getHeaders() }
       );
-
-      const dealId = dealResponse.data.id;
-      try {
-        await axios.put(
-          `https://api.hubapi.com/crm/v4/objects/deals/${dealId}/associations/contacts`,
-          [{ id: contactId, type: 'deal_to_contact' }],
-          { headers: this.getHeaders() }
-        );
-      } catch (e) { console.log('[Association Warning]'); }
-      return dealId;
-    } catch (error) {
-      throw new Error(`Failed: ${error.response?.data?.message || error.message}`);
+      console.log('[Deal Associated] Deal linked to contact');
+    } catch (assocError) {
+      console.log('[Association Warning] Could not associate:', assocError.message);
     }
+
+    return dealId;
+  } catch (error) {
+    console.error('[Deal Creation Error]', error.response?.data || error.message);
+    throw new Error(`Failed: ${error.response?.data?.message || error.message}`);
   }
+}
 
   async testConnection() {
     try {

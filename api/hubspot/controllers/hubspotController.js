@@ -8,13 +8,11 @@ const ContactMapping = require('../models/contactMapping');
 // OAUTH ROUTES
 // ============================================
 
-// Step 1: Redirect user to HubSpot OAuth page
 exports.authorizeOAuth = (req, res) => {
   try {
     const scopes = 'crm.objects.contacts.read crm.objects.contacts.write crm.objects.deals.read crm.objects.deals.write';
     const redirectUri = process.env.HUBSPOT_REDIRECT_URI;
     const clientId = process.env.HUBSPOT_CLIENT_ID;
-
     const state = Math.random().toString(36).substring(7);
 
     const authUrl = `https://app.hubspot.com/oauth/authorize?` +
@@ -35,7 +33,6 @@ exports.authorizeOAuth = (req, res) => {
   }
 };
 
-// Step 2: Handle OAuth callback and exchange code for token
 exports.oauthCallback = async (req, res) => {
   try {
     const { code, error, state } = req.query;
@@ -53,7 +50,6 @@ exports.oauthCallback = async (req, res) => {
       });
     }
 
-    // Exchange authorization code for access token
     const data = qs.stringify({
       grant_type: 'authorization_code',
       client_id: process.env.HUBSPOT_CLIENT_ID,
@@ -74,10 +70,8 @@ exports.oauthCallback = async (req, res) => {
 
     const { access_token, refresh_token, expires_in } = tokenResponse.data;
 
-    // Update HubSpotClient with new access token
     HubSpotClient.setAccessToken(access_token);
 
-    // Save tokens to database for persistence
     await HubSpotSync.findOneAndUpdate(
       { type: 'oauth_token' },
       {
@@ -97,7 +91,6 @@ exports.oauthCallback = async (req, res) => {
       message: 'OAuth connection successful!',
       accessToken: access_token.substring(0, 10) + '...',
       expiresIn: expires_in,
-      redirectUrl: '/',
     });
 
   } catch (err) {
@@ -109,7 +102,6 @@ exports.oauthCallback = async (req, res) => {
   }
 };
 
-// Step 3: Refresh OAuth token when expired
 exports.refreshToken = async (req, res) => {
   try {
     const syncRecord = await HubSpotSync.findOne({ type: 'oauth_token' });
@@ -196,17 +188,16 @@ exports.testConnection = async (req, res) => {
 };
 
 // ============================================
-// CONTACT MAPPING ENDPOINTS
+// CONTACT MAPPING - CREATE & GET
 // ============================================
 
-// Create or update contact mapping
 exports.createContactMapping = async (req, res) => {
   try {
+    console.log('📝 [Mapping Request]:', JSON.stringify(req.body, null, 2));
+
     const { axcContactId, hubspotContactId, email, firstName, lastName } = req.body;
 
-    console.log('[Mapping Request]:', { axcContactId, hubspotContactId });
-
-    // Validate
+    // Validate required fields
     if (!axcContactId || !hubspotContactId) {
       return res.status(400).json({
         error: 'Required fields: axcContactId, hubspotContactId',
@@ -214,21 +205,41 @@ exports.createContactMapping = async (req, res) => {
       });
     }
 
+    // Convert to string and trim
+    const axcId = String(axcContactId).trim();
+    const hubId = String(hubspotContactId).trim();
+
+    console.log('🔍 [Validating]:', { axcId, hubId });
+
+    // Check if mapping already exists
+    const existingMapping = await ContactMapping.findOne({ axcContactId: axcId });
+    
+    if (existingMapping) {
+      console.log('🔄 [Updating existing mapping]:', axcId);
+    } else {
+      console.log('✨ [Creating new mapping]:', axcId);
+    }
+
     // Create or update mapping
     const mapping = await ContactMapping.findOneAndUpdate(
-      { axcContactId },
+      { axcContactId: axcId },
       {
-        axcContactId,
-        hubspotContactId,
-        email,
-        firstName,
-        lastName,
+        axcContactId: axcId,
+        hubspotContactId: hubId,
+        email: email || null,
+        firstName: firstName || null,
+        lastName: lastName || null,
         updatedAt: new Date()
       },
       { upsert: true, new: true }
     );
 
-    console.log('✅ [Mapping Created/Updated]:', mapping);
+    console.log('✅ [Mapping Saved]:', {
+      axcContactId: mapping.axcContactId,
+      hubspotContactId: mapping.hubspotContactId,
+      firstName: mapping.firstName,
+      lastName: mapping.lastName
+    });
 
     res.json({
       success: true,
@@ -245,16 +256,20 @@ exports.createContactMapping = async (req, res) => {
   }
 };
 
-// Get contact mapping
 exports.getContactMapping = async (req, res) => {
   try {
     const { axcContactId } = req.params;
+    const axcId = String(axcContactId).trim();
 
-    const mapping = await ContactMapping.findOne({ axcContactId });
+    console.log('🔍 [Looking up mapping]:', axcId);
+
+    const mapping = await ContactMapping.findOne({ axcContactId: axcId });
 
     if (!mapping) {
       return res.status(404).json({
-        error: `No mapping found for: ${axcContactId}`
+        error: `No mapping found for: ${axcId}`,
+        axcContactId: axcId,
+        allMappings: await ContactMapping.find({})
       });
     }
 
@@ -282,19 +297,23 @@ exports.createDealFromWebhook = async (req, res) => {
 
     const rawPayload = req.body;
 
-    // ✅ EXTRACT DATA FROM AXCELERATE PAYLOAD
+    // Extract data from Axcelerate payload
     const enrollmentId = rawPayload.messageId || `axc-enroll-${Date.now()}`;
     const qualificationCode = rawPayload.message?.enrolment?.class?.qualification?.code || 'UNKNOWN-COURSE';
-    const axcContactId = String(rawPayload.message?.enrolment?.student?.contactId || '').trim();
+    const rawContactId = rawPayload.message?.enrolment?.student?.contactId;
+    
+    // Convert to string and trim
+    const axcContactId = String(rawContactId || '').trim();
 
     console.log('✅ [EXTRACTED FROM AXCELERATE]:', {
       enrollmentId,
       qualificationCode,
+      rawContactId,
       axcContactId
     });
 
     // Validate
-    if (!axcContactId || axcContactId === 'undefined' || axcContactId === 'null') {
+    if (!axcContactId || axcContactId === 'undefined' || axcContactId === 'null' || axcContactId === '') {
       console.error('❌ Could not extract contactId from Axcelerate payload');
       
       return res.status(400).json({
@@ -304,22 +323,33 @@ exports.createDealFromWebhook = async (req, res) => {
       });
     }
 
-    // ✅ LOOK UP IN MAPPING TABLE
-    const mapping = await ContactMapping.findOne({ axcContactId });
+    // Look up in mapping table
+    console.log('🔍 [Searching mapping for]:', axcContactId);
+    const mapping = await ContactMapping.findOne({ axcContactId: axcContactId });
 
     if (!mapping) {
       console.error('❌ No mapping found for:', axcContactId);
       
+      // Show all mappings for debugging
+      const allMappings = await ContactMapping.find({});
+      console.log('📋 [All mappings in database]:', allMappings.map(m => ({ axcContactId: m.axcContactId, hubspotContactId: m.hubspotContactId })));
+
       return res.status(404).json({
         error: `No mapping found for Axcelerate contact: ${axcContactId}`,
         axcContactId: axcContactId,
-        hint: `First, create mapping by sending POST to /api/hubspot/mapping with: {"axcContactId": "${axcContactId}", "hubspotContactId": "...", "email": "...", "firstName": "...", "lastName": "..."}`
+        hint: `First, create mapping by sending POST to /api/hubspot/mapping with: {"axcContactId": "${axcContactId}", "hubspotContactId": "YOUR_HUBSPOT_ID", "email": "EMAIL", "firstName": "FIRST", "lastName": "LAST"}`,
+        allMappings: allMappings.map(m => ({ axcContactId: m.axcContactId, hubspotContactId: m.hubspotContactId }))
       });
     }
 
-    console.log('✅ [MAPPING FOUND]:', mapping);
+    console.log('✅ [MAPPING FOUND]:', {
+      axcContactId: mapping.axcContactId,
+      hubspotContactId: mapping.hubspotContactId,
+      firstName: mapping.firstName,
+      lastName: mapping.lastName
+    });
 
-    // ✅ GET HUBSPOT CONTACT INFO FROM MAPPING
+    // Get contact info from mapping
     const hubspotContactId = mapping.hubspotContactId;
     const contactName = `${mapping.firstName || ''} ${mapping.lastName || ''}`.trim() || 'Unknown';
     const studentEmail = mapping.email || 'unknown@example.com';
@@ -331,7 +361,7 @@ exports.createDealFromWebhook = async (req, res) => {
       axcContactId
     });
 
-    // ✅ CREATE DEAL IN HUBSPOT
+    // Create deal in HubSpot
     const dealData = {
       enrollmentId,
       contactId: hubspotContactId,
@@ -346,7 +376,7 @@ exports.createDealFromWebhook = async (req, res) => {
 
     const dealId = await HubSpotClient.createDeal(hubspotContactId, dealData);
 
-    // ✅ SAVE SYNC RECORD
+    // Save sync record
     await HubSpotSync.create({
       type: 'enrollment_to_deal',
       enrollmentId: enrollmentId,

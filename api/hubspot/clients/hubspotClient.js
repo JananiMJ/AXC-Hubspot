@@ -140,40 +140,20 @@ class HubSpotClient {
   }
 
 async getPipelines() {
-    try {
-      const response = await axios.get(
-        `${this.baseURL}/crm/v3/objects/deals/pipelines`,
-        { headers: this.getHeaders() }
-      );
+  const response = await axios.get(
+    `${this.baseURL}/crm/v3/objects/deals/pipelines`,
+    { headers: this.getHeaders() }
+  );
+  return response.data.results;
+}
 
-      console.log('[Available Pipelines]:', 
-        response.data.results.map(p => ({ id: p.id, label: p.label }))
-      );
-
-      return response.data.results;
-    } catch (error) {
-      console.error('[Error fetching pipelines]:', error.message);
-      throw error;
-    }
-  }
-
-  async getPipelineStages(pipelineId) {
-    try {
-      const response = await axios.get(
-        `${this.baseURL}/crm/v3/objects/deals/pipelines/${pipelineId}/stages`,
-        { headers: this.getHeaders() }
-      );
-
-      console.log('[Available Stages]:', 
-        response.data.results.map(s => ({ id: s.id, label: s.label }))
-      );
-
-      return response.data.results;
-    } catch (error) {
-      console.error('[Error fetching stages]:', error.message);
-      throw error;
-    }
-  }
+async getPipelineStages(pipelineId) {
+  const response = await axios.get(
+    `${this.baseURL}/crm/v3/objects/deals/pipelines/${pipelineId}/stages`,
+    { headers: this.getHeaders() }
+  );
+  return response.data.results;
+}
   
 }
 

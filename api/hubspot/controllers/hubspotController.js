@@ -143,31 +143,51 @@ exports.createDealFromWebhook = async (req, res) => {
 
     const rawPayload = req.body;
 
-    // ✅ EXTRACT DATA FROM AXCELERATE PAYLOAD
-    const enrollmentId = rawPayload.messageId || `axc-enroll-${Date.now()}`;
-    const qualificationCode = rawPayload.message?.enrolment?.class?.qualification?.code || 'UNKNOWN-COURSE';
-    const axcContactId = String(rawPayload.message?.enrolment?.student?.contactId);
+    // ✅ EXTRACT CONTACT ID - Try multiple paths
+    let axcContactId = 
+      rawPayload.message?.enrolment?.student?.contactId ||
+      rawPayload.enrolment?.student?.contactId ||
+      rawPayload.student?.contactId ||
+      rawPayload.contactId;
+
+    // Convert to string
+    axcContactId = String(axcContactId).trim();
+
+    console.log('✅ [EXTRACTED]:', {
+      axcContactId,
+      qualificationCode: rawPayload.message?.enrolment?.class?.qualification?.code,
+      messageId: rawPayload.messageId
+    });
 
     // Validate
-    if (!axcContactId) {
+    if (!axcContactId || axcContactId === 'undefined' || axcContactId === 'null') {
+      console.error('❌ [ERROR] Could not extract contactId from payload');
+      console.error('Payload structure:', JSON.stringify(rawPayload, null, 2));
+      
       return res.status(400).json({
-        error: 'Missing required field: student.contactId'
+        error: 'Missing or invalid student.contactId in webhook',
+        receivedPayload: rawPayload
       });
     }
 
-    console.log('✅ [EXTRACTED FROM AXCELERATE]:', {
+    const enrollmentId = rawPayload.messageId || `axc-enroll-${Date.now()}`;
+    const qualificationCode = rawPayload.message?.enrolment?.class?.qualification?.code || 'UNKNOWN-COURSE';
+
+    console.log('✅ [VALIDATED DATA]:', {
       enrollmentId,
       qualificationCode,
       axcContactId
     });
 
-    // ✅ LOOK UP HUBSPOT CONTACT ID FROM MAPPING
+    // ✅ LOOK UP IN MAPPING TABLE
     const mapping = await ContactMapping.findOne({ axcContactId });
 
     if (!mapping) {
+      console.error('❌ [MAPPING ERROR] No mapping found for:', axcContactId);
       return res.status(404).json({
         error: `No mapping found for Axcelerate contact: ${axcContactId}. Please create mapping first.`,
-        axcContactId: axcContactId
+        axcContactId: axcContactId,
+        hint: `Create mapping with: curl -X POST https://axc-hubspot.onrender.com/api/hubspot/mapping -H "Content-Type: application/json" -d '{"axcContactId": "${axcContactId}", "hubspotContactId": "...", "firstName": "...", "lastName": "..."}'`
       });
     }
 
@@ -177,14 +197,7 @@ exports.createDealFromWebhook = async (req, res) => {
     const contactName = `${mapping.firstName || ''} ${mapping.lastName || ''}`.trim() || 'Unknown';
     const studentEmail = mapping.email || 'unknown@example.com';
 
-    console.log('✅ [CONTACT INFO FROM MAPPING]:', {
-      hubspotContactId,
-      contactName,
-      studentEmail,
-      axcContactId
-    });
-
-    // ✅ CREATE DEAL IN HUBSPOT
+    // Create deal with real contact info
     const dealData = {
       enrollmentId,
       contactId: hubspotContactId,
@@ -195,56 +208,45 @@ exports.createDealFromWebhook = async (req, res) => {
       studentEmail: studentEmail
     };
 
-    console.log('✅ [FINAL DEAL DATA]:', dealData);
+    console.log('✅ [DEAL DATA]:', dealData);
 
     const dealId = await HubSpotClient.createDeal(hubspotContactId, dealData);
 
-    // ✅ SAVE SYNC RECORD
+    // Save sync record
     await HubSpotSync.create({
       type: 'enrollment_to_deal',
-      enrollmentId: enrollmentData.enrollmentId,
+      enrollmentId: enrollmentId,
       dealId: dealId,
       contactId: hubspotContactId,
       studentEmail: studentEmail,
       studentName: contactName,
       courseName: qualificationCode,
       status: 'success',
-    }).catch(dbErr => console.error('Failed to save sync record:', dbErr));
+    }).catch(dbErr => console.error('Failed to save sync:', dbErr));
 
-    console.log('🎉 [SUCCESS] Enrollment → Deal:', {
-      enrollmentId: dealData.enrollmentId,
+    console.log('🎉 [SUCCESS]:', {
+      enrollmentId,
       dealId,
       dealName: `${contactName} – ${qualificationCode}`,
-      studentEmail: studentEmail,
-      hubspotContactId: hubspotContactId,
-      axcContactId: axcContactId
+      studentEmail,
+      hubspotContactId,
+      axcContactId
     });
 
     res.json({
       success: true,
-      message: 'Deal created successfully',
-      dealId: dealId,
-      contactId: hubspotContactId,
-      enrollmentId: dealData.enrollmentId,
+      dealId,
       dealName: `${contactName} – ${qualificationCode}`,
-      axcContactId: axcContactId
+      axcContactId
     });
 
   } catch (err) {
     console.error('[Webhook Error]', err.message);
-
-    // Log failed sync attempt
-    await HubSpotSync.create({
-      type: 'enrollment_to_deal',
-      enrollmentId: req.body?.messageId,
-      status: 'error',
-      error: err.message,
-      retryCount: 0,
-    }).catch(dbErr => console.error('Failed to log error:', dbErr));
-
+    
     res.status(500).json({
       error: 'Failed to create deal',
       details: err.message,
+      payload: req.body
     });
   }
 };

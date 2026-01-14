@@ -73,12 +73,12 @@ class HubSpotClient {
       const closeDateStr = closeDate.toISOString().split('T')[0];
 
       const dealProperties = {
-        dealname: dealData.courseName || 'Course Enrollment',
-        amount: String(Math.round((dealData.courseAmount || 199) * 100)), // HubSpot expects cents
-        dealstage: 'send_enrolment_details', // ✅ YOUR VALID STAGE
-        closedate: closeDateStr,
-        hs_pipeline_stage: 'appointmentscheduled' // Additional safety
-      };
+  dealname: dealData.courseName || 'Course Enrollment',
+  amount: String(Math.round((dealData.courseAmount || 199) * 100)), 
+  hs_pipeline: '705874836',     // B2C Pipeline
+  dealstage: '1032873244',      // Send Enrolment Details
+  closedate: closeDateStr
+};
 
       console.log('[Deal Creation] Properties:', dealProperties);
       console.log('[Deal Creation] Contact ID:', contactId);

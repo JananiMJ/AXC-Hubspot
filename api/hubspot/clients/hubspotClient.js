@@ -3,17 +3,9 @@ require('dotenv').config();
 
 class HubSpotClient {
   constructor() {
-  this.baseURL = 'https://api.hubapi.com';
-  this.accessToken = null;
-  setImmediate(() => this.initToken()); // Load on startup
-}
-  async initToken() {
-  const token = await this.getStoredToken();
-  if (token) {
-    this.accessToken = token;
-    console.log('✅ Token auto-loaded');
+    this.baseURL = 'https://api.hubapi.com';
+    this.accessToken = process.env.HUBSPOT_ACCESS_TOKEN;
   }
-}
 
   getClient() {
     if (!this.accessToken) {
@@ -31,26 +23,23 @@ class HubSpotClient {
   setAccessToken(token) {
     this.accessToken = token;
     process.env.HUBSPOT_ACCESS_TOKEN = token;
+    console.log('✅ Token set');
   }
 
-  // ✅ PRODUCTION READY - Your WORKING config
   async createDeal(contactId, dealData) {
     try {
-      console.log('[Deal Creation] Starting deal creation for:', dealData.courseName);
+      console.log('[Deal Creation] Starting for:', dealData.courseName);
       
       const closeDate = new Date();
       closeDate.setDate(closeDate.getDate() + 30);
       const closeDateStr = closeDate.toISOString().split('T')[0];
 
-      // ✅ PROVEN WORKING - No pipeline properties needed
       const dealProperties = {
         dealname: dealData.courseName || 'Course Enrollment',
         amount: String(Math.round((dealData.courseAmount || 199) * 100)),
-        dealstage: 'appointmentscheduled',  // ✅ YOUR VALID STAGE
+        dealstage: 'appointmentscheduled',
         closedate: closeDateStr
       };
-
-      console.log('[Deal Creation] Properties:', dealProperties);
 
       const dealResponse = await axios.post(
         'https://api.hubapi.com/crm/v3/objects/deals',
@@ -64,48 +53,33 @@ class HubSpotClient {
       );
 
       const dealId = dealResponse.data.id;
-      console.log('[✅ Deal Created] Deal ID:', dealId);
+      console.log('[✅ Deal Created] ID:', dealId);
 
-      // Associate contact (non-critical)
       if (contactId) {
         try {
           await axios.put(
             `https://api.hubapi.com/crm/v4/objects/deals/${dealId}/associations/contacts`,
             [{ id: contactId, type: 'deal_to_contact' }],
-            {
-              headers: {
-                'Authorization': `Bearer ${this.accessToken}`,
-                'Content-Type': 'application/json'
-              }
-            }
+            { headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Content-Type': 'application/json' } }
           );
-          console.log('[✅ Deal Associated] to contact');
         } catch (assocError) {
-          console.log('[⚠️ Association skipped]:', assocError.response?.data?.message);
+          console.log('[⚠️ Association skipped]');
         }
       }
 
       return dealId;
     } catch (error) {
-      console.error('[Deal Creation Error] Status:', error.response?.status);
-      console.error('[Deal Creation Error] Details:', error.response?.data);
-      throw new Error(`Failed to create deal: ${error.response?.data?.message || error.message}`);
+      console.error('[Deal Error]:', error.response?.data?.message || error.message);
+      throw error;
     }
   }
 
   async testConnection() {
     try {
       const response = await this.getClient().get('/crm/v3/objects/contacts?limit=1');
-      return { 
-        success: true, 
-        message: '✅ Connected', 
-        contactsCount: response.data.total || 0 
-      };
+      return { success: true, message: '✅ Connected', contactsCount: response.data.total || 0 };
     } catch (error) {
-      return { 
-        success: false, 
-        error: 'Connection failed' 
-      };
+      return { success: false, error: 'Connection failed' };
     }
   }
 }

@@ -1,201 +1,159 @@
-const express = require('express');
-const mongoose = require('mongoose');
+const axios = require('axios');
+const HubSpotSync = require('./models/hubspotSync'); // YOUR MODEL
 require('dotenv').config();
 
-const HubSpotClient = require('./hubspotClient');
-const enrollmentSchema = require('./models/Enrollment');
-const cors = require('cors');
-
-const app = express();
-const PORT = process.env.PORT || 10000;
-
-// Middleware
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
-app.use(cors());
-
-// Health check
-app.get('/health', async (req, res) => {
-  try {
-    const hubspotTest = await HubSpotClient.testConnection();
-    res.json({
-      success: true,
-      timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV || 'development',
-      hubspot: hubspotTest.success ? '✅ Connected' : '❌ Failed',
-      mongodb: mongoose.connection.readyState === 1 ? '✅ Connected' : '❌ Failed'
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+class HubSpotClient {
+  constructor() {
+    this.baseURL = 'https://api.hubapi.com';
+    this.accessToken = process.env.HUBSPOT_ACCESS_TOKEN;
   }
-});
 
-// OAuth endpoints
-app.get('/api/hubspot/oauth/authorize', (req, res) => {
-  const authUrl = `https://app.hubspot.com/oauth/authorize?client_id=${process.env.HUBSPOT_CLIENT_ID}&scope=crm.objects.contacts.read crm.objects.deals.write crm.objects.contacts.write&redirect_uri=${encodeURIComponent(process.env.HUBSPOT_REDIRECT_URI)}`;
-  res.redirect(authUrl);
-});
-
-app.get('/api/hubspot/oauth/callback', async (req, res) => {
-  const { code } = req.query;
-  try {
-    const tokenResponse = await axios.post('https://api.hubapi.com/oauth/v1/token', {
-      grant_type: 'authorization_code',
-      client_id: process.env.HUBSPOT_CLIENT_ID,
-      client_secret: process.env.HUBSPOT_CLIENT_SECRET,
-      redirect_uri: process.env.HUBSPOT_REDIRECT_URI,
-      code
-    });
-    
-    await HubSpotClient.setAccessToken(tokenResponse.data.access_token);
-    res.json({ success: true, message: '✅ OAuth completed! Token saved to MongoDB.' });
-  } catch (error) {
-    res.status(400).json({ error: 'OAuth failed', details: error.response?.data });
-  }
-});
-
-// Test connection
-app.get('/api/hubspot/test-connection', async (req, res) => {
-  const result = await HubSpotClient.testConnection();
-  res.json(result);
-});
-
-// 🔥 MAIN WEBHOOK - Axcelerate Enrollment → HubSpot Deal
-app.post('/api/hubspot/webhook', async (req, res) => {
-  try {
-    console.log('🎯 [WEBHOOK RECEIVED] Raw payload:', JSON.stringify(req.body, null, 2));
-    
-    // Flexible field mapping for Axcelerate webhook
-    const enrollmentData = extractEnrollmentData(req.body);
-    
-    if (!enrollmentData.isValid) {
-      console.error('❌ [VALIDATION FAILED]', enrollmentData.errors);
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required enrollment data',
-        received: req.body,
-        errors: enrollmentData.errors
-      });
-    }
-
-    console.log('✅ [VALIDATED DATA]', enrollmentData);
-
-    // Check for duplicate (idempotency)
-    const existing = await enrollmentSchema.findOne({ 
-      enrollmentId: enrollmentData.enrollmentId 
-    });
-    
-    if (existing) {
-      console.log('⏭️ [DUPLICATE SKIPPED]', enrollmentData.enrollmentId);
-      return res.json({ 
-        success: true, 
-        message: 'Already processed',
-        enrollmentId: enrollmentData.enrollmentId 
-      });
-    }
-
-    // Create HubSpot Deal
-    const dealId = await HubSpotClient.createDeal(
-      enrollmentData.studentEmail, 
-      {
-        courseName: enrollmentData.courseName,
-        courseAmount: enrollmentData.courseAmount
+  // Load token from YOUR MongoDB model
+  async loadAccessToken() {
+    try {
+      const tokenRecord = await HubSpotSync.findOne({ 
+        type: 'oauth_token', 
+        status: 'success' 
+      }).sort({ updatedAt: -1 }).limit(1);
+      
+      if (tokenRecord && tokenRecord.accessToken && 
+          (!tokenRecord.expiresAt || tokenRecord.expiresAt > new Date())) {
+        this.accessToken = tokenRecord.accessToken;
+        return true;
       }
-    );
+    } catch (error) {
+      console.error('Token load error:', error);
+    }
+    return false;
+  }
 
-    // Save to MongoDB
-    const enrollment = new enrollmentSchema({
-      enrollmentId: enrollmentData.enrollmentId,
-      studentEmail: enrollmentData.studentEmail,
-      studentName: enrollmentData.studentName,
-      courseName: enrollmentData.courseName,
-      courseAmount: enrollmentData.courseAmount,
-      hubspotDealId: dealId,
-      processedAt: new Date()
-    });
-    await enrollment.save();
-
-    console.log('🎉 [SUCCESS] Deal created:', dealId);
-    
-    res.json({
-      success: true,
-      message: '✅ Enrollment synced to HubSpot Deal',
-      enrollmentId: enrollmentData.enrollmentId,
-      dealId: dealId
-    });
-
-  } catch (error) {
-    console.error('💥 [WEBHOOK ERROR]', error.message);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+  getClient() {
+    if (!this.accessToken) {
+      throw new Error('No HubSpot access token. Complete OAuth first: /api/hubspot/oauth/authorize');
+    }
+    return axios.create({
+      baseURL: this.baseURL,
+      headers: {
+        Authorization: `Bearer ${this.accessToken}`,
+        'Content-Type': 'application/json',
+      },
     });
   }
-});
 
-// Extract enrollment data from various Axcelerate payload formats
-function extractEnrollmentData(payload) {
-  return {
-    enrollmentId: payload.id || 
-                 payload.enrollmentId || 
-                 payload.data?.id || 
-                 payload.eventId,
+  async setAccessToken(token) {
+    this.accessToken = token;
+    process.env.HUBSPOT_ACCESS_TOKEN = token;
+    console.log('✅ HubSpot token set');
+  }
+
+  // YOUR ORIGINAL createDeal METHOD (PERFECT)
+  async createDeal(studentEmail, dealData) {
+    try {
+      console.log('[Deal Creation] Starting for:', dealData.courseName, 'Student:', studentEmail);
+      
+      // Find or create contact
+      let contactId = await this.findOrCreateContact(studentEmail);
+      
+      // Calculate close date
+      const closeDate = new Date();
+      closeDate.setDate(closeDate.getDate() + 30);
+      const closeDateStr = closeDate.toISOString().split('T')[0];
+
+      const dealProperties = {
+        dealname: `${dealData.courseName} - Enrollment`,
+        amount: String(Math.round(dealData.courseAmount * 100)), // HubSpot expects cents
+        dealstage: 'negotiation',
+        closedate: closeDateStr,
+        course_name: dealData.courseName,
+        student_email: studentEmail
+      };
+
+      console.log('[Deal Properties]:', dealProperties);
+
+      const dealResponse = await this.getClient().post('/crm/v3/objects/deals', {
+        properties: dealProperties
+      });
+
+      const dealId = dealResponse.data.id;
+      console.log('[Deal Created] ID:', dealId);
+
+      // Associate deal with contact
+      try {
+        await this.getClient().put(
+          `/crm/v4/objects/deals/${dealId}/associations/contacts`,
+          [{ id: contactId, type: 'deal_to_contact' }]
+        );
+        console.log('[Deal Associated] Linked to contact:', contactId);
+      } catch (assocError) {
+        console.warn('[Association Warning]:', assocError.response?.data?.message);
+      }
+
+      return dealId;
+    } catch (error) {
+      console.error('[Deal Error] Status:', error.response?.status);
+      console.error('[Deal Error] Message:', error.response?.data?.message);
+      throw new Error(`Deal creation failed: ${error.response?.data?.message || error.message}`);
+    }
+  }
+
+  async findOrCreateContact(email) {
+    try {
+      // Search existing contact
+      const searchResponse = await this.getClient().get(
+        `/crm/v3/objects/contacts/search`,
+        { params: { 
+          filterGroups: [{ 
+            filters: [{ 
+              propertyName: 'email', 
+              operator: 'EQ', 
+              value: email 
+            }] 
+          }] 
+        }}
+      );
+      
+      if (searchResponse.data.total > 0) {
+        return searchResponse.data.results[0].id;
+      }
+    } catch (searchError) {
+      console.log('Contact search failed, creating new:', searchError.message);
+    }
+
+    // Create new contact
+    const contactResponse = await this.getClient().post('/crm/v3/objects/contacts', {
+      properties: { email }
+    });
     
-    studentEmail: payload.email || 
-                 payload.student?.email || 
-                 payload.contact?.email || 
-                 payload.data?.student?.email ||
-                 payload.properties?.email,
-    
-    studentName: payload.student?.name || 
-                payload.contact?.name || 
-                payload.data?.student?.name ||
-                payload.properties?.firstname + ' ' + payload.properties?.lastname ||
-                'Unknown Student',
-    
-    courseName: payload.course?.name || 
-               payload.product?.name || 
-               payload.data?.course?.name ||
-               payload.properties?.course_name ||
-               'Unknown Course',
-    
-    courseAmount: parseFloat(payload.amount) || 
-                 parseFloat(payload.course?.price) || 
-                 parseFloat(payload.data?.course?.price) ||
-                 parseFloat(payload.properties?.amount) || 
-                 0,
-    
-    enrollmentDate: payload.date || 
-                   payload.created_at || 
-                   payload.timestamp || 
-                   new Date().toISOString(),
-    
-    isValid: !!(payload.id || payload.enrollmentId) && 
-             (payload.email || payload.student?.email) && 
-             (payload.course?.name || payload.product?.name),
-    
-    errors: []
-  };
+    return contactResponse.data.id;
+  }
+
+  async testConnection() {
+    try {
+      // Try to load token first
+      const hasToken = await this.loadAccessToken();
+      if (!hasToken && !this.accessToken) {
+        return { 
+          success: false, 
+          error: 'No OAuth token found. Visit /api/hubspot/oauth/authorize first',
+          solution: 'Complete OAuth flow'
+        };
+      }
+      
+      const response = await this.getClient().get('/crm/v3/objects/contacts?limit=1');
+      return { 
+        success: true, 
+        message: '✅ HubSpot connected successfully!', 
+        contactsCount: response.data.total || 0 
+      };
+    } catch (error) {
+      return { 
+        success: false, 
+        error: 'Authentication failed',
+        details: error.response?.data?.message || error.message,
+        solution: '1. Check OAuth token 2. Verify HubSpot app permissions'
+      };
+    }
+  }
 }
 
-// MongoDB connection
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('✅ MongoDB Connected'))
-  .catch(err => console.error('❌ MongoDB Error:', err));
-
-app.listen(PORT, () => {
-  console.log(`
-╔════════════════════════════════════════════════════════════╗
-║     PMV HubSpot Integration API Server Started            ║
-╠════════════════════════════════════════════════════════════╣
-║ Port: ${PORT}                                              ║
-║ Environment: ${process.env.NODE_ENV || 'development'}      ║
-║ Domain: ${process.env.DOMAIN || 'localhost'}               ║
-║ API Root: ${process.env.DOMAIN ? `https://${process.env.DOMAIN}` : 'http://localhost:3000'} ║
-║ Health Check: ${process.env.DOMAIN ? `https://${process.env.DOMAIN}/health` : 'http://localhost:3000/health'} ║
-╚════════════════════════════════════════════════════════════╝
-  `);
-});
-
-module.exports = app;
+module.exports = new HubSpotClient();

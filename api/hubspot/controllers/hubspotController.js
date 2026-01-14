@@ -3,7 +3,7 @@ const qs = require('qs');
 const HubSpotClient = require('../clients/hubspotClient');
 const HubSpotSync = require('../models/hubspotSync');
 const ContactMapping = require('../models/contactMapping');
-
+const mongoose = require('mongoose');
 // ============================================
 // OAUTH ROUTES
 // ============================================

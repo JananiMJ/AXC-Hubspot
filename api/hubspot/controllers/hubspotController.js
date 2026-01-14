@@ -140,7 +140,7 @@ exports.testConnection = async (req, res) => {
 exports.createDealFromWebhook = async (req, res) => {
 
 // Helper function: Create or get contact in HubSpot
-async function createOrGetContact(contactData) {\
+async function createOrGetContact(contactData) {
 
 // Refresh OAuth token (for token expiry)
 exports.refreshToken = async (req, res) => {

@@ -2,10 +2,16 @@ const axios = require('axios');
 require('dotenv').config();
 
 class HubSpotClient {
+
+
   constructor() {
-    this.baseURL = 'https://api.hubapi.com';
-    this.accessToken = process.env.HUBSPOT_ACCESS_TOKEN;
-  }
+  this.baseURL = 'https://api.hubapi.com';
+  this.accessToken = process.env.HUBSPOT_ACCESS_TOKEN || null;
+  console.log('[HubSpotClient] Initialized with token:', 
+    this.accessToken ? 'Yes' : 'No (will use OAuth)');
+}
+
+  
 
   getClient() {
     return axios.create({
@@ -22,12 +28,24 @@ class HubSpotClient {
     process.env.HUBSPOT_ACCESS_TOKEN = token;
   }
 
+  
   getHeaders() {
-    return {
-      Authorization: `Bearer ${this.accessToken}`,
-      'Content-Type': 'application/json',
-    };
+  
+  const token = this.accessToken || process.env.HUBSPOT_ACCESS_TOKEN;
+  
+  if (!token) {
+    console.warn('[WARNING] No HubSpot access token found!');
+    console.warn('Make sure to:');
+    console.warn('1. Complete OAuth flow: https://axc-hubspot.onrender.com/api/hubspot/oauth/authorize');
+    console.warn('2. OR set HUBSPOT_ACCESS_TOKEN environment variable');
   }
+  
+  return {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  };
+}
+
 
   async createDeal(contactId, dealData) {
     try {

@@ -75,7 +75,7 @@ class HubSpotClient {
       const dealProperties = {
         dealname: dealData.courseName || 'Course Enrollment',
         amount: String(Math.round((dealData.courseAmount || 199) * 100)), // HubSpot expects cents
-        dealstage: 'appointmentscheduled', // ✅ YOUR VALID STAGE
+        dealstage: 'send_enrolment_details', // ✅ YOUR VALID STAGE
         closedate: closeDateStr,
         hs_pipeline_stage: 'appointmentscheduled' // Additional safety
       };

@@ -3,9 +3,17 @@ require('dotenv').config();
 
 class HubSpotClient {
   constructor() {
-    this.baseURL = 'https://api.hubapi.com';
-    this.accessToken = process.env.HUBSPOT_ACCESS_TOKEN;
+  this.baseURL = 'https://api.hubapi.com';
+  this.accessToken = null;
+  setImmediate(() => this.initToken()); // Load on startup
+}
+  async initToken() {
+  const token = await this.getStoredToken();
+  if (token) {
+    this.accessToken = token;
+    console.log('✅ Token auto-loaded');
   }
+}
 
   getClient() {
     if (!this.accessToken) {

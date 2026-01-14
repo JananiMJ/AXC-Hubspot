@@ -134,7 +134,7 @@ class HubSpotClient {
       if (!hasToken && !this.accessToken) {
         return { 
           success: false, 
-          error: 'No OAuth token found. Visit /api/hubspot/oauth/authorize first',
+          error: 'No OAuth token found. Visit /api/hubspot/oauth/authorize first', 
           solution: 'Complete OAuth flow'
         };
       }

@@ -143,92 +143,91 @@ exports.createDealFromWebhook = async (req, res) => {
 
     const rawPayload = req.body;
 
-    // ✅ EXTRACT REAL DATA FROM AXCELERATE PAYLOAD
+    // ✅ EXTRACT DATA FROM AXCELERATE PAYLOAD
     const enrollmentId = rawPayload.messageId || `axc-enroll-${Date.now()}`;
     const qualificationCode = rawPayload.message?.enrolment?.class?.qualification?.code || 'UNKNOWN-COURSE';
-    const studentContactId = rawPayload.message?.enrolment?.student?.contactId;
+    const axcContactId = String(rawPayload.message?.enrolment?.student?.contactId);
 
-    // Validate required fields
-    if (!studentContactId) {
+    // Validate
+    if (!axcContactId) {
       return res.status(400).json({
         error: 'Missing required field: student.contactId'
       });
     }
 
-    console.log('✅ [EXTRACTED DATA]:', {
+    console.log('✅ [EXTRACTED FROM AXCELERATE]:', {
       enrollmentId,
       qualificationCode,
-      studentContactId
+      axcContactId
     });
 
-    // ✅ FETCH REAL CONTACT INFO FROM HUBSPOT
-    let contactName = 'Unknown';
-    let studentEmail = 'unknown@example.com';
+    // ✅ LOOK UP HUBSPOT CONTACT ID FROM MAPPING
+    const mapping = await ContactMapping.findOne({ axcContactId });
 
-    try {
-      const contactResponse = await HubSpotClient.getClient().get(
-        `/crm/v3/objects/contacts/${studentContactId}?properties=firstname,lastname,email`
-      );
-
-      const properties = contactResponse.data.properties;
-      const firstName = properties.firstname || '';
-      const lastName = properties.lastname || '';
-      contactName = `${firstName} ${lastName}`.trim() || 'Unknown';
-      studentEmail = properties.email || 'unknown@example.com';
-
-      console.log('✅ [CONTACT INFO FROM HUBSPOT]:', {
-        contactId: studentContactId,
-        contactName,
-        studentEmail
+    if (!mapping) {
+      return res.status(404).json({
+        error: `No mapping found for Axcelerate contact: ${axcContactId}. Please create mapping first.`,
+        axcContactId: axcContactId
       });
-    } catch (contactError) {
-      console.warn('⚠️ [Warning] Could not fetch contact details:', contactError.message);
-      // Continue with defaults - don't fail the whole request
     }
 
-    // ✅ CREATE DEAL WITH REAL DATA
-    const enrollmentData = {
-      enrollmentId,
-      contactId: studentContactId,
+    console.log('✅ [MAPPING FOUND]:', mapping);
+
+    const hubspotContactId = mapping.hubspotContactId;
+    const contactName = `${mapping.firstName || ''} ${mapping.lastName || ''}`.trim() || 'Unknown';
+    const studentEmail = mapping.email || 'unknown@example.com';
+
+    console.log('✅ [CONTACT INFO FROM MAPPING]:', {
+      hubspotContactId,
       contactName,
+      studentEmail,
+      axcContactId
+    });
+
+    // ✅ CREATE DEAL IN HUBSPOT
+    const dealData = {
+      enrollmentId,
+      contactId: hubspotContactId,
+      contactName: contactName,
       courseCode: qualificationCode,
       courseName: qualificationCode,
       courseAmount: 0,
-      studentEmail
+      studentEmail: studentEmail
     };
 
-    console.log('✅ [FINAL ENROLLMENT DATA]:', enrollmentData);
+    console.log('✅ [FINAL DEAL DATA]:', dealData);
 
-    // Create the deal in HubSpot
-    const dealId = await HubSpotClient.createDeal(studentContactId, enrollmentData);
+    const dealId = await HubSpotClient.createDeal(hubspotContactId, dealData);
 
-    // Save sync record to database
+    // ✅ SAVE SYNC RECORD
     await HubSpotSync.create({
       type: 'enrollment_to_deal',
       enrollmentId: enrollmentData.enrollmentId,
       dealId: dealId,
-      contactId: studentContactId,
-      studentEmail: enrollmentData.studentEmail,
-      studentName: enrollmentData.contactName,
-      courseName: enrollmentData.courseCode,
+      contactId: hubspotContactId,
+      studentEmail: studentEmail,
+      studentName: contactName,
+      courseName: qualificationCode,
       status: 'success',
-    });
+    }).catch(dbErr => console.error('Failed to save sync record:', dbErr));
 
     console.log('🎉 [SUCCESS] Enrollment → Deal:', {
-      enrollmentId: enrollmentData.enrollmentId,
+      enrollmentId: dealData.enrollmentId,
       dealId,
       dealName: `${contactName} – ${qualificationCode}`,
       studentEmail: studentEmail,
-      contactId: studentContactId
+      hubspotContactId: hubspotContactId,
+      axcContactId: axcContactId
     });
 
     res.json({
       success: true,
       message: 'Deal created successfully',
       dealId: dealId,
-      contactId: studentContactId,
-      enrollmentId: enrollmentData.enrollmentId,
-      dealName: `${contactName} – ${qualificationCode}`
+      contactId: hubspotContactId,
+      enrollmentId: dealData.enrollmentId,
+      dealName: `${contactName} – ${qualificationCode}`,
+      axcContactId: axcContactId
     });
 
   } catch (err) {
@@ -238,7 +237,6 @@ exports.createDealFromWebhook = async (req, res) => {
     await HubSpotSync.create({
       type: 'enrollment_to_deal',
       enrollmentId: req.body?.messageId,
-      studentEmail: req.body?.message?.enrolment?.student?.email,
       status: 'error',
       error: err.message,
       retryCount: 0,
@@ -371,3 +369,45 @@ exports.refreshToken = async (req, res) => {
     });
   }
 }
+
+exports.createContactMapping = async (req, res) => {
+  try {
+    const { axcContactId, hubspotContactId, email, firstName, lastName } = req.body;
+
+    // Validate
+    if (!axcContactId || !hubspotContactId) {
+      return res.status(400).json({
+        error: 'Required fields: axcContactId, hubspotContactId'
+      });
+    }
+
+    // Create or update mapping
+    const mapping = await ContactMapping.findOneAndUpdate(
+      { axcContactId },
+      {
+        axcContactId,
+        hubspotContactId,
+        email,
+        firstName,
+        lastName,
+        updatedAt: new Date()
+      },
+      { upsert: true, new: true }
+    );
+
+    console.log('✅ [Mapping Created/Updated]:', mapping);
+
+    res.json({
+      success: true,
+      message: 'Contact mapping created successfully',
+      mapping
+    });
+
+  } catch (err) {
+    console.error('[Mapping Error]', err.message);
+    res.status(500).json({
+      error: 'Failed to create mapping',
+      details: err.message
+    });
+  }
+};

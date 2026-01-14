@@ -2,6 +2,7 @@ const axios = require('axios');
 const qs = require('qs');
 const HubSpotClient = require('../clients/hubspotClient');
 const HubSpotSync = require('../models/hubspotSync');
+const ContactMapping = require('../models/contactMapping');
 
 // OAuth Authorization - Redirect user to HubSpot OAuth page
 exports.authorizeOAuth = (req, res) => {

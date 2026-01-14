@@ -139,155 +139,113 @@ exports.testConnection = async (req, res) => {
 exports.createDealFromWebhook = async (req, res) => {
   try {
     console.log('🎯 [RAW AXCELERATE PAYLOAD]:', JSON.stringify(req.body, null, 2));
-    
-    /* ✅ IMPROVED PARSING */
-    const enrollmentData = {
-      enrollmentId: req.body.id || 
-                   req.body.enrollmentId || 
-                   req.body.data?.id || 
-                   req.body.properties?.enrollment_id ||
-                   req.body.enrolment_id ||
-                   `axc-enroll-${Date.now()}`,
-      
-      studentEmail: req.body.email || 
-                   req.body.student?.email || 
-                   req.body.contact?.email || 
-                   req.body.properties?.email ||
-                   req.body.properties?.student_email ||
-                   req.body.data?.student?.email ||
-                   'student@example.com',
-      
-      studentFirstName: req.body.student?.firstName ||
-                       req.body.student?.first_name ||
-                       req.body.contact?.firstName ||
-                       req.body.firstName ||
-                       req.body.properties?.firstname ||
-                       req.body.data?.student?.firstName ||
-                       'Student',
-      
-      studentLastName: req.body.student?.lastName ||
-                      req.body.student?.last_name ||
-                      req.body.contact?.lastName ||
-                      req.body.lastName ||
-                      req.body.properties?.lastname ||
-                      req.body.data?.student?.lastName ||
-                      'User',
 
-      /* ✅ CRITICAL: Course Code */
-      courseCode: req.body.course?.code ||
-                 req.body.course?.id ||
-                 req.body.product?.code ||
-                 req.body.product?.id ||
-                 req.body.courseCode ||
-                 req.body.course_code ||
-                 req.body.data?.course?.code ||
-                 req.body.properties?.course_code ||
-                 req.body.productId ||
-                 'COURSE-001',
+    const rawPayload = req.body;
 
-      /* ✅ Course Name (for reference) */
-      courseName: req.body.course?.name || 
-                 req.body.product?.name || 
-                 req.body.data?.course?.name ||
-                 req.body.properties?.course_name ||
-                 req.body.properties?.course?.name ||
-                 req.body.course?.title ||
-                 'Course Enrollment',
-      
-      courseAmount: parseFloat(req.body.amount) || 
-                   parseFloat(req.body.course?.price) || 
-                   parseFloat(req.body.properties?.amount) || 
-                   parseFloat(req.body.properties?.course_amount) ||
-                   0
-    };
+    // ✅ EXTRACT REAL DATA FROM AXCELERATE PAYLOAD
+    const enrollmentId = rawPayload.messageId || `axc-enroll-${Date.now()}`;
+    const qualificationCode = rawPayload.message?.enrolment?.class?.qualification?.code || 'UNKNOWN-COURSE';
+    const studentContactId = rawPayload.message?.enrolment?.student?.contactId;
 
-    console.log('✅ [PARSED DATA]:', enrollmentData);
-
-    // Check duplicate
-    const existingSync = await HubSpotSync.findOne({ 
-      enrollmentId: enrollmentData.enrollmentId 
-    });
-    
-    if (existingSync && existingSync.status === 'success') {
-      console.log('⏭️ [DUPLICATE SKIPPED]:', enrollmentData.enrollmentId);
-      return res.json({ 
-        success: true, 
-        message: 'Already processed',
-        enrollmentId: enrollmentData.enrollmentId,
-        dealId: existingSync.dealId 
+    // Validate required fields
+    if (!studentContactId) {
+      return res.status(400).json({
+        error: 'Missing required field: student.contactId'
       });
     }
 
-    // Create/find contact with FULL NAME
-    const contactResult = await createOrGetContact({
-      email: enrollmentData.studentEmail,
-      firstName: enrollmentData.studentFirstName,
-      lastName: enrollmentData.studentLastName,
-      fullName: `${enrollmentData.studentFirstName} ${enrollmentData.studentLastName}`
+    console.log('✅ [EXTRACTED DATA]:', {
+      enrollmentId,
+      qualificationCode,
+      studentContactId
     });
 
-    if (!contactResult.success) {
-      console.error('❌ Contact failed:', contactResult.error);
+    // ✅ FETCH REAL CONTACT INFO FROM HUBSPOT
+    let contactName = 'Unknown';
+    let studentEmail = 'unknown@example.com';
+
+    try {
+      const contactResponse = await HubSpotClient.getClient().get(
+        `/crm/v3/objects/contacts/${studentContactId}?properties=firstname,lastname,email`
+      );
+
+      const properties = contactResponse.data.properties;
+      const firstName = properties.firstname || '';
+      const lastName = properties.lastname || '';
+      contactName = `${firstName} ${lastName}`.trim() || 'Unknown';
+      studentEmail = properties.email || 'unknown@example.com';
+
+      console.log('✅ [CONTACT INFO FROM HUBSPOT]:', {
+        contactId: studentContactId,
+        contactName,
+        studentEmail
+      });
+    } catch (contactError) {
+      console.warn('⚠️ [Warning] Could not fetch contact details:', contactError.message);
+      // Continue with defaults - don't fail the whole request
     }
 
-    const contactId = contactResult.contactId || null;
+    // ✅ CREATE DEAL WITH REAL DATA
+    const enrollmentData = {
+      enrollmentId,
+      contactId: studentContactId,
+      contactName,
+      courseCode: qualificationCode,
+      courseName: qualificationCode,
+      courseAmount: 0,
+      studentEmail
+    };
 
-    /* ✅ CRITICAL: Pass courseCode to createDeal */
-    const dealId = await HubSpotClient.createDeal(contactId, {
-      courseCode: enrollmentData.courseCode,  // ✅ MUST PASS THIS
-      courseName: enrollmentData.courseName,
-      courseAmount: enrollmentData.courseAmount
-    });
+    console.log('✅ [FINAL ENROLLMENT DATA]:', enrollmentData);
 
-    // Save to database
+    // Create the deal in HubSpot
+    const dealId = await HubSpotClient.createDeal(studentContactId, enrollmentData);
+
+    // Save sync record to database
     await HubSpotSync.create({
       type: 'enrollment_to_deal',
       enrollmentId: enrollmentData.enrollmentId,
       dealId: dealId,
-      contactId: contactId,
+      contactId: studentContactId,
       studentEmail: enrollmentData.studentEmail,
-      studentName: `${enrollmentData.studentFirstName} ${enrollmentData.studentLastName}`,
-      courseName: enrollmentData.courseName,
-      courseCode: enrollmentData.courseCode,  // ✅ STORE THIS TOO
-      courseAmount: enrollmentData.courseAmount,
-      status: 'success'
+      studentName: enrollmentData.contactName,
+      courseName: enrollmentData.courseCode,
+      status: 'success',
     });
 
     console.log('🎉 [SUCCESS] Enrollment → Deal:', {
       enrollmentId: enrollmentData.enrollmentId,
-      dealId: dealId,
-      dealName: `${enrollmentData.studentFirstName} ${enrollmentData.studentLastName} – ${enrollmentData.courseCode}`,
-      studentEmail: enrollmentData.studentEmail
+      dealId,
+      dealName: `${contactName} – ${qualificationCode}`,
+      studentEmail: studentEmail,
+      contactId: studentContactId
     });
 
     res.json({
       success: true,
-      message: '✅ Enrollment synced to HubSpot Deal',
-      enrollmentId: enrollmentData.enrollmentId,
+      message: 'Deal created successfully',
       dealId: dealId,
-      studentEmail: enrollmentData.studentEmail,
-      dealName: `${enrollmentData.studentFirstName} ${enrollmentData.studentLastName} – ${enrollmentData.courseCode}`
+      contactId: studentContactId,
+      enrollmentId: enrollmentData.enrollmentId,
+      dealName: `${contactName} – ${qualificationCode}`
     });
 
-  } catch (error) {
-    console.error('💥 [WEBHOOK ERROR]:', error.message);
-    
-    try {
-      await HubSpotSync.create({
-        type: 'enrollment_to_deal',
-        enrollmentId: req.body.id || req.body.enrollmentId || 'unknown',
-        studentEmail: req.body.email || 'unknown',
-        status: 'error',
-        error: error.message
-      });
-    } catch (dbError) {
-      console.error('Database log failed:', dbError.message);
-    }
-    
+  } catch (err) {
+    console.error('[Webhook Error]', err.message);
+
+    // Log failed sync attempt
+    await HubSpotSync.create({
+      type: 'enrollment_to_deal',
+      enrollmentId: req.body?.messageId,
+      studentEmail: req.body?.message?.enrolment?.student?.email,
+      status: 'error',
+      error: err.message,
+      retryCount: 0,
+    }).catch(dbErr => console.error('Failed to log error:', dbErr));
+
     res.status(500).json({
-      success: false,
-      error: error.message,
-      receivedPayload: req.body
+      error: 'Failed to create deal',
+      details: err.message,
     });
   }
 };

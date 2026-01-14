@@ -16,26 +16,18 @@ router.get('/test-connection', hubspotController.testConnection);
 // ===== Webhook Routes =====
 router.post('/webhook', hubspotController.createDealFromWebhook);
 
-// ✅ NEW: Get available pipelines
+
 router.get('/pipelines', async (req, res) => {
-  try {
-    const HubSpotClient = require('../clients/hubspotClient');
-    const pipelines = await HubSpotClient.getPipelines();
-    res.json({ success: true, pipelines });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  const HubSpotClient = require('../clients/hubspotClient');
+  const pipelines = await HubSpotClient.getPipelines();
+  res.json({ success: true, pipelines });
 });
 
-// ✅ NEW: Get pipeline stages
 router.get('/pipelines/:pipelineId/stages', async (req, res) => {
-  try {
-    const HubSpotClient = require('../clients/hubspotClient');
-    const stages = await HubSpotClient.getPipelineStages(req.params.pipelineId);
-    res.json({ success: true, stages });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  const HubSpotClient = require('../clients/hubspotClient');
+  const stages = await HubSpotClient.getPipelineStages(req.params.pipelineId);
+  res.json({ success: true, stages });
 });
+
 
 module.exports = router;

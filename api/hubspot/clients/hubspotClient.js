@@ -5,9 +5,41 @@ class HubSpotClient {
   constructor() {
     this.baseURL = 'https://api.hubapi.com';
     this.accessToken = process.env.HUBSPOT_ACCESS_TOKEN;
+    this.loadTokenFromDB(); // 🔥 ADD THIS LINE
   }
 
-  getClient() {
+  // 🔥 NEW METHOD - Load token from YOUR MongoDB
+  async loadTokenFromDB() {
+    try {
+      const mongoose = require('mongoose');
+      const HubSpotSync = require('./models/hubspotSync'); // Adjust path
+      
+      const tokenRecord = await HubSpotSync.findOne({ 
+        type: 'oauth_token',
+        status: 'success'
+      }).sort({ updatedAt: -1 });
+      
+      if (tokenRecord && tokenRecord.accessToken) {
+        this.accessToken = tokenRecord.accessToken;
+        console.log('✅ Token loaded from MongoDB');
+        return true;
+      }
+    } catch (error) {
+      console.log('Token load failed (not critical):', error.message);
+    }
+  }
+
+  // Update getClient to auto-load token
+  async getClient() {
+    // Try loading token if none exists
+    if (!this.accessToken) {
+      await this.loadTokenFromDB();
+    }
+    
+    if (!this.accessToken) {
+      throw new Error('No HubSpot token. Run OAuth first.');
+    }
+    
     return axios.create({
       baseURL: this.baseURL,
       headers: {
@@ -16,81 +48,5 @@ class HubSpotClient {
       },
     });
   }
-
-  setAccessToken(token) {
-    this.accessToken = token;
-    process.env.HUBSPOT_ACCESS_TOKEN = token;
-  }
-
- async createDeal(contactId, dealData) {
-  try {
-    console.log('[Deal Creation] Starting deal creation for:', dealData.courseName);
-    
-    const closeDate = new Date();
-    closeDate.setDate(closeDate.getDate() + 30);
-    const closeDateStr = closeDate.toISOString().split('T')[0];
-
-    // 🔥 FIXED: Use YOUR valid pipeline stage
-    const dealProperties = {
-      dealname: dealData.courseName || 'New Deal',
-      amount: String(Math.round((dealData.courseAmount || 199) * 100)),
-      dealstage: 'appointmentscheduled',  // ✅ From your error logs
-      closedate: closeDateStr
-    };
-
-    console.log('[Deal Creation] Properties:', dealProperties);
-    console.log('[Deal Creation] Contact ID:', contactId);
-
-    const dealResponse = await axios.post(
-      'https://api.hubapi.com/crm/v3/objects/deals',
-      { properties: dealProperties },
-      {
-        headers: {
-          'Authorization': `Bearer ${this.accessToken}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    const dealId = dealResponse.data.id;
-    console.log('[Deal Created] Deal ID:', dealId);
-
-    // Associate with contact (if contactId exists)
-    if (contactId) {
-      try {
-        await axios.put(
-          `https://api.hubapi.com/crm/v4/objects/deals/${dealId}/associations/contacts`,
-          [{ id: contactId, type: 'deal_to_contact' }],
-          {
-            headers: {
-              'Authorization': `Bearer ${this.accessToken}`,
-              'Content-Type': 'application/json'
-            }
-          }
-        );
-        console.log('[Deal Associated] Deal linked to contact');
-      } catch (assocError) {
-        console.log('[Deal Association Warning]:', assocError.response?.data?.message);
-      }
-    }
-
-    return dealId;
-  } catch (error) {
-    console.error('[Deal Creation Error] Status:', error.response?.status);
-    console.error('[Deal Creation Error] Details:', error.response?.data);
-    throw new Error(`Failed to create deal: ${error.response?.data?.message || error.message}`);
-  }
-}
-
-
-  async testConnection() {
-    try {
-      const response = await this.getClient().get('/crm/v3/objects/contacts?limit=1');
-      return { success: true, message: 'Connected', contactsCount: response.data.total || 0 };
-    } catch (error) {
-      return { success: false, error: 'Connection failed' };
-    }
-  }
-}
 
 module.exports = new HubSpotClient();

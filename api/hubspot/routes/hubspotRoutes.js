@@ -216,5 +216,53 @@ async function updateAxcelerateEnrollmentStatus(enrollmentId, newStatus) {
     };
   }
 }
+router.post('/axcelerate-enrolment-status', async (req, res) => {
+  try {
+    console.log('🔄 [Axcelerate Status Webhook]:', req.body);
+
+    const { enrolmentId, status } = req.body;
+
+    if (!enrolmentId || !status) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        required: ['enrolmentId', 'status']
+      });
+    }
+
+    // Find mapping using enrolmentId
+    const syncRecord = await HubSpotSync.findOne({
+      enrollmentId: String(enrolmentId)
+    });
+
+    if (!syncRecord) {
+      return res.status(404).json({
+        error: 'No deal mapping found for enrolmentId',
+        enrolmentId
+      });
+    }
+
+    const HubSpotClient = require('../clients/hubspotClient');
+
+    await HubSpotClient.updateDealStatusOnly(
+      syncRecord.dealId,
+      status
+    );
+
+    res.json({
+      success: true,
+      message: 'HubSpot deal status updated',
+      dealId: syncRecord.dealId,
+      enrolmentId,
+      status
+    });
+
+  } catch (err) {
+    console.error('[Axcelerate → HubSpot Error]', err.message);
+    res.status(500).json({
+      error: 'Failed to update HubSpot deal status',
+      details: err.message
+    });
+  }
+});
 
 module.exports = router;

@@ -4,6 +4,7 @@ const axios = require('axios');
 
 const hubspotController = require('../controllers/hubspotController');
 const HubSpotSync = require('../models/hubspotSync');
+const HubSpotClient = require('../clients/hubspotClient');
 
 console.log('Controller loaded:', Object.keys(hubspotController));
 
@@ -25,7 +26,6 @@ router.post('/webhook', hubspotController.createDealFromWebhook);
 // ===== Pipelines Routes =====
 router.get('/pipelines', async (req, res) => {
   try {
-    const HubSpotClient = require('../clients/hubspotClient');
     console.log('[Pipelines] Fetching...');
     const pipelines = await HubSpotClient.getPipelines();
     console.log('[Pipelines] Found:', pipelines.length);
@@ -38,7 +38,6 @@ router.get('/pipelines', async (req, res) => {
 
 router.get('/pipelines/:pipelineId/stages', async (req, res) => {
   try {
-    const HubSpotClient = require('../clients/hubspotClient');
     const { pipelineId } = req.params;
     console.log('[Stages] Fetching for pipeline:', pipelineId);
     const stages = await HubSpotClient.getPipelineStages(pipelineId);
@@ -51,14 +50,11 @@ router.get('/pipelines/:pipelineId/stages', async (req, res) => {
 });
 
 // ===== DEAL STATUS UPDATE - SYNC TO AXCELERATE =====
-
 router.post('/deal-status-update', async (req, res) => {
   try {
     console.log('🔄 [Deal Status Update Received]:', JSON.stringify(req.body, null, 2));
-
     const { dealId, dealstage, dealname } = req.body;
 
-    // Validate input
     if (!dealId || !dealstage) {
       return res.status(400).json({
         error: 'Missing required fields',
@@ -68,14 +64,10 @@ router.post('/deal-status-update', async (req, res) => {
     }
 
     console.log('🔍 [Searching for sync record]:', dealId);
-
-    // Find the sync record to get enrollment ID
     const syncRecord = await HubSpotSync.findOne({ dealId: String(dealId) });
 
     if (!syncRecord) {
       console.error('❌ No sync record found for dealId:', dealId);
-      
-      // Show all sync records for debugging
       const allRecords = await HubSpotSync.find({ type: 'enrollment_to_deal' });
       console.log('📋 [All sync records]:', allRecords.map(r => ({ dealId: r.dealId, enrollmentId: r.enrollmentId })));
 
@@ -92,7 +84,6 @@ router.post('/deal-status-update', async (req, res) => {
       studentName: syncRecord.studentName
     });
 
-    // Map HubSpot stage to Axcelerate status
     const axcStatus = mapHubSpotStageToAxcStatus(dealstage);
 
     console.log('📊 [Status Mapped]:', {
@@ -100,11 +91,7 @@ router.post('/deal-status-update', async (req, res) => {
       axcelerateStatus: axcStatus
     });
 
-    // Update Axcelerate enrollment status
-    const axcUpdateResult = await updateAxcelerateEnrollmentStatus(
-      syncRecord.enrollmentId,
-      axcStatus
-    );
+    const axcUpdateResult = await updateAxcelerateEnrollmentStatus(syncRecord.enrollmentId, axcStatus);
 
     if (!axcUpdateResult.success) {
       console.warn('⚠️ [Axcelerate Update Warning]:', axcUpdateResult.error);
@@ -136,24 +123,25 @@ router.post('/deal-status-update', async (req, res) => {
     });
   }
 });
+
 function mapHubSpotStageToAxcStatus(hubspotStage) {
   const stageMap = {
     // HubSpot → Axcelerate status mapping
     'send_enrollment_details': 'Tentative',
-    '1032873244': 'Tentative',                   // Send Enrollment Details (by ID)
-    '1032873243': 'In Progress',                 // Next stage
+    '1032873244': 'Tentative',
+    '1032873243': 'In Progress',
     '1032873248': 'In Progress',
     '1032873249': 'In Progress',
     'appointmentscheduled': 'In Progress',
     'presentationscheduled': 'In Progress',
     'qualifiedtobuy': 'In Progress',
     'decisionmakerboughtin': 'Confirmed',
-    'closedwon': 'Confirmed',                    // Deal won
-    'closedlost': 'Cancelled',                   // Deal lost
+    'closedwon': 'Confirmed',
+    'closedlost': 'Cancelled'
   };
 
   const mappedStatus = stageMap[hubspotStage];
-  
+
   if (!mappedStatus) {
     console.warn('⚠️ [Unknown stage]:', hubspotStage, '- defaulting to Tentative');
   }
@@ -161,31 +149,20 @@ function mapHubSpotStageToAxcStatus(hubspotStage) {
   return mappedStatus || 'Tentative';
 }
 
-/**
- * Update Axcelerate enrollment status via API
- */
 async function updateAxcelerateEnrollmentStatus(enrollmentId, newStatus) {
   try {
     console.log('📤 [Calling Axcelerate API]:', { enrollmentId, newStatus });
-
     const axcApiUrl = process.env.AXCELERATE_API_URL || 'https://api.axcelerate.com.au';
     const axcApiKey = process.env.AXCELERATE_API_KEY;
 
     if (!axcApiKey) {
       console.warn('⚠️ AXCELERATE_API_KEY not set in environment');
-      return { 
-        success: false, 
-        error: 'Axcelerate API key not configured - set AXCELERATE_API_KEY environment variable'
-      };
+      return { success: false, error: 'Axcelerate API key not configured' };
     }
-
-    console.log('🔐 [Auth Header]:', `Bearer ${axcApiKey.substring(0, 10)}...`);
 
     const response = await axios.patch(
       `${axcApiUrl}/v1/enrollments/${enrollmentId}`,
-      {
-        status: newStatus
-      },
+      { status: newStatus },
       {
         headers: {
           'Authorization': `Bearer ${axcApiKey}`,
@@ -195,12 +172,7 @@ async function updateAxcelerateEnrollmentStatus(enrollmentId, newStatus) {
     );
 
     console.log('✅ [Axcelerate API Success]:', response.data);
-
-    return {
-      success: true,
-      message: 'Enrollment status updated in Axcelerate',
-      data: response.data
-    };
+    return { success: true, message: 'Enrollment status updated', data: response.data };
 
   } catch (err) {
     console.error('❌ [Axcelerate API Error]:', {
@@ -216,43 +188,36 @@ async function updateAxcelerateEnrollmentStatus(enrollmentId, newStatus) {
     };
   }
 }
+
+// ===== Axcelerate → HubSpot Status Sync =====
 router.post('/axcelerate-enrolment-status', async (req, res) => {
   try {
     console.log('🔄 [Axcelerate Status Webhook]:', req.body);
+    const { enrollmentId, status } = req.body;
 
-    const { enrolmentId, status } = req.body;
-
-    if (!enrolmentId || !status) {
+    if (!enrollmentId || !status) {
       return res.status(400).json({
         error: 'Missing required fields',
-        required: ['enrolmentId', 'status']
+        required: ['enrollmentId', 'status']
       });
     }
 
-    // Find mapping using enrolmentId
-    const syncRecord = await HubSpotSync.findOne({
-      enrollmentId: String(enrolmentId)
-    });
+    const syncRecord = await HubSpotSync.findOne({ enrollmentId: String(enrollmentId) });
 
     if (!syncRecord) {
       return res.status(404).json({
-        error: 'No deal mapping found for enrolmentId',
-        enrolmentId
+        error: 'No deal mapping found for enrollmentId',
+        enrollmentId
       });
     }
 
-    const HubSpotClient = require('../clients/hubspotClient');
-
-    await HubSpotClient.updateDealStatusOnly(
-      syncRecord.dealId,
-      status
-    );
+    await HubSpotClient.updateDealStatusOnly(syncRecord.dealId, status);
 
     res.json({
       success: true,
       message: 'HubSpot deal status updated',
       dealId: syncRecord.dealId,
-      enrolmentId,
+      enrollmentId,
       status
     });
 

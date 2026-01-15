@@ -138,6 +138,36 @@ async updateDealStatus(dealId, statusValue) {
 
   console.log(`[✅ Status Updated] Deal ID: ${dealId}`);
 }
+async updateDealStatusOnly(dealId, statusValue) {
+  try {
+    await axios.patch(
+      `${this.baseURL}/crm/v3/objects/deals/${dealId}`,
+      {
+        properties: {
+          enrolment_status: statusValue
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    console.log('[✅ HubSpot Deal Status Updated]', {
+      dealId,
+      enrolment_status: statusValue
+    });
+
+    return true;
+  } catch (error) {
+    console.error('[❌ HubSpot Status Update Error]',
+      error.response?.data || error.message
+    );
+    throw error;
+  }
+}
 
   async testConnection() {
     try {

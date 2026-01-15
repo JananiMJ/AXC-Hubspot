@@ -1,7 +1,5 @@
 const axios = require('axios');
 require('dotenv').config();
-
-// ✅ IMPORT SYNC MODEL
 const HubSpotSync = require('../models/hubspotSync');
 
 class HubSpotClient {
@@ -17,11 +15,7 @@ class HubSpotClient {
 
   getHeaders() {
     const token = this.accessToken || process.env.HUBSPOT_ACCESS_TOKEN;
-
-    if (!token) {
-      console.warn('[WARNING] No HubSpot access token found!');
-    }
-
+    if (!token) console.warn('[WARNING] No HubSpot access token found!');
     return {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
@@ -40,13 +34,28 @@ class HubSpotClient {
     try {
       console.log('[Deal Creation] Starting');
 
+      // 🔐 REQUIRED
+      if (!dealData.enrollmentId) {
+        throw new Error('enrollmentId is REQUIRED to create mapping');
+      }
+
+      // Prevent duplicate deal creation
+      const existing = await HubSpotSync.findOne({
+        enrollmentId: String(dealData.enrollmentId),
+      });
+
+      if (existing) {
+        console.log('ℹ️ Deal already exists for enrollment:', dealData.enrollmentId);
+        return existing.dealId;
+      }
+
       const closeDate = new Date();
       closeDate.setDate(closeDate.getDate() + 30);
       const closeDateStr = closeDate.toISOString().split('T')[0];
 
-      const contactName = dealData.contactName || 'Unknown Student';
+      const contactName = dealData.contactName || 'Student';
       const courseCode = dealData.courseCode || 'UNKNOWN';
-      const enrollmentId = dealData.enrollmentId;
+      const enrollmentId = String(dealData.enrollmentId);
 
       const dealName = `${contactName} – ${courseCode}`;
 
@@ -64,10 +73,10 @@ class HubSpotClient {
         { headers: this.getHeaders() }
       );
 
-      const dealId = dealResponse.data.id;
+      const dealId = String(dealResponse.data.id);
       console.log('[✅ Deal Created]', dealId);
 
-      // 🔗 Associate Contact
+      // 🔗 Associate contact
       if (contactId) {
         await axios.put(
           `${this.baseURL}/crm/v4/objects/deals/${dealId}/associations/contacts`,
@@ -76,54 +85,22 @@ class HubSpotClient {
         );
       }
 
-      // ✅ SAVE MAPPING (THIS FIXES YOUR ERROR)
-      if (enrollmentId) {
-        await HubSpotSync.create({
-          type: 'enrollment_to_deal',
-          dealId: String(dealId),
-          enrollmentId: String(enrollmentId),
-          studentName: contactName,
-        });
+      // ✅ SAVE MAPPING (CRITICAL FIX)
+      await HubSpotSync.create({
+        type: 'enrollment_to_deal',
+        dealId,
+        enrollmentId,
+        studentName: contactName,
+        courseCode,
+      });
 
-        console.log('[✅ Sync Record Saved]', {
-          dealId,
-          enrollmentId,
-        });
-      }
+      console.log('[✅ Mapping Saved]', { enrollmentId, dealId });
 
       return dealId;
     } catch (error) {
-      console.error('[❌ Deal Creation Error]', error.response?.data || error.message);
+      console.error('[❌ Deal Creation Error]', error.message);
       throw error;
     }
-  }
-
-  /* =====================================================
-     FIND DEAL BY ENROLMENT ID (OPTIONAL)
-     ===================================================== */
-  async findDealByEnrolId(enrolmentId) {
-    const response = await axios.post(
-      `${this.baseURL}/crm/v3/objects/deals/search`,
-      {
-        filterGroups: [
-          {
-            filters: [
-              {
-                propertyName: 'enrol_enrolment_id',
-                operator: 'EQ',
-                value: enrolmentId,
-              },
-            ],
-          },
-        ],
-        limit: 1,
-      },
-      { headers: this.getHeaders() }
-    );
-
-    return response.data.results.length
-      ? response.data.results[0]
-      : null;
   }
 
   /* =====================================================

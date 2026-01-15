@@ -136,3 +136,85 @@ router.post('/deal-status-update', async (req, res) => {
     });
   }
 });
+function mapHubSpotStageToAxcStatus(hubspotStage) {
+  const stageMap = {
+    // HubSpot → Axcelerate status mapping
+    'send_enrollment_details': 'Tentative',
+    '1032873244': 'Tentative',                   // Send Enrollment Details (by ID)
+    '1032873243': 'In Progress',                 // Next stage
+    '1032873248': 'In Progress',
+    '1032873249': 'In Progress',
+    'appointmentscheduled': 'In Progress',
+    'presentationscheduled': 'In Progress',
+    'qualifiedtobuy': 'In Progress',
+    'decisionmakerboughtin': 'Confirmed',
+    'closedwon': 'Confirmed',                    // Deal won
+    'closedlost': 'Cancelled',                   // Deal lost
+  };
+
+  const mappedStatus = stageMap[hubspotStage];
+  
+  if (!mappedStatus) {
+    console.warn('⚠️ [Unknown stage]:', hubspotStage, '- defaulting to Tentative');
+  }
+
+  return mappedStatus || 'Tentative';
+}
+
+/**
+ * Update Axcelerate enrollment status via API
+ */
+async function updateAxcelerateEnrollmentStatus(enrollmentId, newStatus) {
+  try {
+    console.log('📤 [Calling Axcelerate API]:', { enrollmentId, newStatus });
+
+    const axcApiUrl = process.env.AXCELERATE_API_URL || 'https://api.axcelerate.com.au';
+    const axcApiKey = process.env.AXCELERATE_API_KEY;
+
+    if (!axcApiKey) {
+      console.warn('⚠️ AXCELERATE_API_KEY not set in environment');
+      return { 
+        success: false, 
+        error: 'Axcelerate API key not configured - set AXCELERATE_API_KEY environment variable'
+      };
+    }
+
+    console.log('🔐 [Auth Header]:', `Bearer ${axcApiKey.substring(0, 10)}...`);
+
+    const response = await axios.patch(
+      `${axcApiUrl}/v1/enrollments/${enrollmentId}`,
+      {
+        status: newStatus
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${axcApiKey}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    console.log('✅ [Axcelerate API Success]:', response.data);
+
+    return {
+      success: true,
+      message: 'Enrollment status updated in Axcelerate',
+      data: response.data
+    };
+
+  } catch (err) {
+    console.error('❌ [Axcelerate API Error]:', {
+      status: err.response?.status,
+      data: err.response?.data,
+      message: err.message
+    });
+
+    return {
+      success: false,
+      error: err.response?.data?.message || err.message,
+      hint: 'Check Axcelerate API key and enrollment ID'
+    };
+  }
+}
+
+module.exports = router;

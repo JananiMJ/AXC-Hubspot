@@ -100,6 +100,44 @@ async createDeal(contactId, dealData) {
     throw new Error(`Failed: ${error.response?.data?.message || error.message}`);
   }
 }
+async findDealByEnrolId(enrolId) {
+  const response = await axios.post(
+    `${this.baseURL}/crm/v3/objects/deals/search`,
+    {
+      filterGroups: [
+        {
+          filters: [
+            {
+              propertyName: 'enrol_enrolment_id',
+              operator: 'EQ',
+              value: enrolId,
+            },
+          ],
+        },
+      ],
+      properties: ['enrolment_status'],
+      limit: 1,
+    },
+    { headers: this.getHeaders() }
+  );
+
+  return response.data.results.length
+    ? response.data.results[0]
+    : null;
+}
+async updateDealStatus(dealId, statusValue) {
+  await axios.patch(
+    `${this.baseURL}/crm/v3/objects/deals/${dealId}`,
+    {
+      properties: {
+        enrolment_status: statusValue,
+      },
+    },
+    { headers: this.getHeaders() }
+  );
+
+  console.log(`[✅ Status Updated] Deal ID: ${dealId}`);
+}
 
   async testConnection() {
     try {

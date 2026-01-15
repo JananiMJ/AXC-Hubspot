@@ -439,5 +439,70 @@ exports.createDealFromWebhook = async (req, res) => {
     });
   }
 };
+function mapHubSpotStageToAxcStatus(hubspotStage) {
+  const stageMap = {
+    // HubSpot → Axcelerate status mapping
+    'send_enrollment_details': 'Tentative',      // Initial stage
+    '1032873244': 'Tentative',                   // Send Enrollment Details (by ID)
+    'appointmentscheduled': 'In Progress',       // If using default pipeline
+    'presentationscheduled': 'In Progress',
+    'qualifiedtobuy': 'In Progress',
+    'decisionmakerboughtin': 'Confirmed',        // Deal moving forward
+    'closedwon': 'Confirmed',                    // Deal won
+    'closedlost': 'Cancelled',                   // Deal lost
+  };
 
+  return stageMap[hubspotStage] || 'Tentative';
+}
+
+/**
+ * Update Axcelerate enrollment status via API
+ */
+async function updateAxcelerateEnrollmentStatus(enrollmentId, newStatus) {
+  try {
+    console.log('📤 [Updating Axcelerate]:', { enrollmentId, newStatus });
+
+    // You'll need to implement this based on Axcelerate API
+    // This is a placeholder that shows the structure
+    
+    const axcApiUrl = process.env.AXCELERATE_API_URL || 'https://api.axcelerate.com.au';
+    const axcApiKey = process.env.AXCELERATE_API_KEY;
+
+    if (!axcApiKey) {
+      console.warn('⚠️ AXCELERATE_API_KEY not set - cannot update');
+      return { 
+        success: false, 
+        message: 'Axcelerate API key not configured' 
+      };
+    }
+
+    const response = await axios.patch(
+      `${axcApiUrl}/v1/enrollments/${enrollmentId}`,
+      {
+        status: newStatus
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${axcApiKey}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    console.log('✅ [Axcelerate Update Success]:', response.data);
+
+    return {
+      success: true,
+      message: 'Enrollment status updated in Axcelerate',
+      data: response.data
+    };
+
+  } catch (err) {
+    console.error('❌ [Axcelerate API Error]', err.response?.data || err.message);
+    return {
+      success: false,
+      error: err.response?.data?.message || err.message
+    };
+  }
+}
 module.exports = exports;
